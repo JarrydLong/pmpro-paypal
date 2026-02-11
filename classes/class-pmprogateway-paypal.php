@@ -318,10 +318,6 @@ class PMProGateway_paypal extends PMProGateway {
 	public static function ajax_create_order() {
 		check_ajax_referer( 'pmpro_paypal_nonce', 'nonce' );
 
-		if ( ! is_user_logged_in() ) {
-			wp_send_json_error( array( 'message' => 'Not logged in.' ) );
-		}
-
 		$level_id = intval( $_POST['level_id'] ?? 0 );
 		if ( empty( $level_id ) ) {
 			wp_send_json_error( array( 'message' => 'No level specified.' ) );
@@ -383,10 +379,6 @@ class PMProGateway_paypal extends PMProGateway {
 	 */
 	public static function ajax_create_subscription() {
 		check_ajax_referer( 'pmpro_paypal_nonce', 'nonce' );
-
-		if ( ! is_user_logged_in() ) {
-			wp_send_json_error( array( 'message' => 'Not logged in.' ) );
-		}
 
 		$level_id = intval( $_POST['level_id'] ?? 0 );
 		if ( empty( $level_id ) ) {
