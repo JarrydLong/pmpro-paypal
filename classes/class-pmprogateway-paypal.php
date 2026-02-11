@@ -259,7 +259,8 @@ class PMProGateway_paypal extends PMProGateway {
 
 		$client_id   = get_option( 'pmpro_paypal_client_id' );
 		$environment = get_option( 'pmpro_gateway_environment' );
-		$currency    = function_exists( 'pmpro_get_currency' ) ? pmpro_get_currency() : 'USD';
+		global $pmpro_currency;
+		$currency = ! empty( $pmpro_currency ) ? $pmpro_currency : 'USD';
 		$is_recurring = ! empty( $pmpro_level ) && pmpro_isLevelRecurring( $pmpro_level );
 
 		// PayPal JS SDK.
@@ -332,7 +333,8 @@ class PMProGateway_paypal extends PMProGateway {
 			wp_send_json_error( array( 'message' => 'Invalid level.' ) );
 		}
 
-		$currency = function_exists( 'pmpro_get_currency' ) ? pmpro_get_currency() : 'USD';
+		global $pmpro_currency;
+		$currency = ! empty( $pmpro_currency ) ? $pmpro_currency : 'USD';
 		$amount   = pmpro_round_price_as_string( (float) $level->initial_payment );
 
 		if ( (float) $amount <= 0 ) {
@@ -396,7 +398,8 @@ class PMProGateway_paypal extends PMProGateway {
 			wp_send_json_error( array( 'message' => 'Invalid level.' ) );
 		}
 
-		$currency = function_exists( 'pmpro_get_currency' ) ? pmpro_get_currency() : 'USD';
+		global $pmpro_currency;
+		$currency = ! empty( $pmpro_currency ) ? $pmpro_currency : 'USD';
 
 		// Get or create the PayPal plan for this level/price combo.
 		$plan_id = self::get_or_create_plan( $level, $currency );
