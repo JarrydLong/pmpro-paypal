@@ -233,7 +233,8 @@ class PMPro_PayPal_API {
 	public function refund_capture( $capture_id, $amount = null ) {
 		$body = array();
 		if ( $amount !== null ) {
-			$currency = function_exists( 'pmpro_get_currency' ) ? pmpro_get_currency() : 'USD';
+			global $pmpro_currency;
+			$currency = ! empty( $pmpro_currency ) ? $pmpro_currency : 'USD';
 			$body['amount'] = array(
 				'value'         => pmpro_round_price_as_string( (float) $amount ),
 				'currency_code' => $currency,
