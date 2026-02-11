@@ -1,4 +1,4 @@
-=== PayPal for Paid Memberships Pro ===
+=== Paid Memberships Pro - PayPal Gateway ===
 Contributors: strangerstudios, paidmembershipspro
 Tags: paypal, paid memberships pro, pmpro, payments, subscriptions
 Requires at least: 5.4
