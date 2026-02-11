@@ -1,6 +1,6 @@
 <?php
 /**
- * Plugin Name: PayPal for Paid Memberships Pro
+ * Plugin Name: Paid Memberships Pro - PayPal Gateway
  * Plugin URI: https://www.paidmembershipspro.com/add-ons/pmpro-paypal/
  * Description: Modern PayPal integration using Orders V2 and Subscriptions API v1 with Smart Payment Buttons.
  * Version: 1.0
