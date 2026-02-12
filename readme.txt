@@ -8,7 +8,7 @@ Stable tag: 1.0
 License: GPL-2.0+
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Modern PayPal integration for Paid Memberships Pro using PayPal's REST APIs with Smart Payment Buttons.
+Modern PayPal integration for Paid Memberships Pro using PayPal's REST APIs with offsite redirect checkout.
 
 == Description ==
 
@@ -16,16 +16,27 @@ This plugin adds PayPal as a payment gateway for Paid Memberships Pro using PayP
 
 * **One-time payments** via Orders V2 API
 * **Recurring subscriptions** via Subscriptions API v1 (gateway-managed)
-* **Smart Payment Buttons** via PayPal JS SDK (onsite popup checkout)
-* **Webhooks** for automated payment and subscription notifications
+* **Offsite redirect checkout** — form submits, PMPro creates the user and order, then redirects to PayPal for approval
+* **Webhooks** for automated checkout completion, renewal payments, cancellations, refunds, and other events
+* **Token order fallback** — if the user returns from PayPal before the webhook fires, the plugin polls PayPal directly to complete checkout
 
 The old PayPal Express and Website Payments Pro gateways in PMPro core use PayPal's deprecated NVP/SOAP API. This plugin replaces them with PayPal's current REST platform — the same APIs behind PayPal's "Complete Payments" (PPCP) product.
+
+= How Checkout Works =
+
+1. The member fills out the PMPro checkout form and clicks "Check Out with PayPal".
+2. PMPro creates the user account and order (all checkout hooks and filters run normally).
+3. The plugin saves the order as a "token" order, creates a PayPal order or subscription via API, and redirects to PayPal.
+4. The member approves payment at PayPal and is redirected back to the confirmation page.
+5. A PayPal webhook (or the token order fallback) captures the payment and completes checkout via `pmpro_complete_async_checkout()`.
+
+This offsite redirect approach ensures that discount codes, add-on pricing, tax calculations, and custom profile start dates are all applied before PayPal is contacted.
 
 = Requirements =
 
 * Paid Memberships Pro (latest version)
 * PayPal Business account
-* HTTPS on your site (required by PayPal for webhooks and the JS SDK)
+* HTTPS on your site (required by PayPal for webhooks)
 
 == Installation ==
 
@@ -98,4 +109,10 @@ No. This plugin uses PayPal Webhooks (the modern replacement for IPN), and they 
 == Changelog ==
 
 = 1.0 =
-* Initial release.
+* Initial release with offsite redirect checkout.
+* One-time payments via PayPal Orders V2 API.
+* Recurring subscriptions via PayPal Subscriptions API v1 with gateway-managed billing.
+* Automatic webhook registration and signature verification.
+* Token order fallback (`check_token_orders`) for webhook timing edge cases.
+* Lazy product/plan creation with MD5-based plan matching.
+* Full webhook handling: checkout completion, renewals, cancellations, refunds, payment failures, reactivations.
