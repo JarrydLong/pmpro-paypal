@@ -31,13 +31,21 @@ function pmpro_paypal_handle_webhook( $request ) {
 
 	// Route by event type.
 	switch ( $event_type ) {
+		case 'CHECKOUT.ORDER.APPROVED':
+			$message = pmpro_paypal_handle_checkout_order_approved( $resource );
+			break;
+
+		case 'BILLING.SUBSCRIPTION.ACTIVATED':
+			$message = pmpro_paypal_handle_subscription_activated( $resource );
+			break;
+
 		case 'PAYMENT.SALE.COMPLETED':
 			$message = pmpro_paypal_handle_sale_completed( $resource );
 			break;
 
 		case 'PAYMENT.CAPTURE.COMPLETED':
-			// One-time captures are already handled at checkout. Log only.
-			$message = 'Capture completed. Already processed at checkout.';
+			// Captures are handled by CHECKOUT.ORDER.APPROVED webhook. Log only.
+			$message = 'Capture completed. Already processed via checkout order approval.';
 			break;
 
 		case 'PAYMENT.CAPTURE.REFUNDED':
@@ -53,10 +61,6 @@ function pmpro_paypal_handle_webhook( $request ) {
 
 		case 'BILLING.SUBSCRIPTION.PAYMENT.FAILED':
 			$message = pmpro_paypal_handle_payment_failed( $resource );
-			break;
-
-		case 'BILLING.SUBSCRIPTION.ACTIVATED':
-			$message = 'Subscription activated. Already tracked from checkout.';
 			break;
 
 		case 'BILLING.SUBSCRIPTION.RE-ACTIVATED':
@@ -114,6 +118,130 @@ function pmpro_paypal_verify_webhook( $request, $event ) {
 	}
 
 	return ( $result['verification_status'] ?? '' ) === 'SUCCESS';
+}
+
+/**
+ * Handle CHECKOUT.ORDER.APPROVED — one-time payment checkout completion.
+ *
+ * Captures the approved order at PayPal, finds the PMPro token order,
+ * and completes checkout via pmpro_complete_async_checkout().
+ */
+function pmpro_paypal_handle_checkout_order_approved( $resource ) {
+	global $wpdb;
+
+	$paypal_order_id = $resource['id'] ?? '';
+	if ( empty( $paypal_order_id ) ) {
+		return 'No PayPal order ID in event.';
+	}
+
+	$api = new PMPro_PayPal_API();
+
+	// Get the latest order data from PayPal.
+	$paypal_order = $api->get_order( $paypal_order_id );
+	if ( is_wp_error( $paypal_order ) ) {
+		return 'Error getting order: ' . $paypal_order->get_error_message();
+	}
+
+	// Find the PMPro order by paypal_order_id meta.
+	$pmpro_order_id = $wpdb->get_var( $wpdb->prepare(
+		"SELECT pmpro_membership_order_id FROM {$wpdb->pmpro_membership_ordermeta} WHERE meta_key = 'paypal_order_id' AND meta_value = %s LIMIT 1",
+		$paypal_order_id
+	) );
+
+	if ( empty( $pmpro_order_id ) ) {
+		return 'No PMPro order found for PayPal order ' . $paypal_order_id;
+	}
+
+	$morder = new MemberOrder( $pmpro_order_id );
+	if ( empty( $morder->id ) ) {
+		return 'Could not load PMPro order #' . $pmpro_order_id;
+	}
+
+	// Capture the order if still in APPROVED status.
+	if ( 'APPROVED' === ( $paypal_order['status'] ?? '' ) ) {
+		$capture_result = $api->capture_order( $paypal_order_id );
+		if ( is_wp_error( $capture_result ) ) {
+			return 'Error capturing payment for order #' . $morder->id . ': ' . $capture_result->get_error_message();
+		}
+		$paypal_order = $capture_result;
+	}
+
+	if ( 'COMPLETED' !== ( $paypal_order['status'] ?? '' ) ) {
+		return 'Order not yet completed. Status: ' . ( $paypal_order['status'] ?? 'unknown' );
+	}
+
+	// Set payment transaction ID from capture.
+	if ( ! empty( $paypal_order['purchase_units'][0]['payments']['captures'][0]['id'] ) ) {
+		$morder->payment_transaction_id = $paypal_order['purchase_units'][0]['payments']['captures'][0]['id'];
+		if ( method_exists( $morder, 'update_order_meta' ) ) {
+			$morder->update_order_meta( 'paypal_capture_id', $morder->payment_transaction_id );
+		}
+	}
+	$morder->saveOrder();
+
+	// Complete checkout if still in token status.
+	if ( 'token' === $morder->status ) {
+		pmpro_pull_checkout_data_from_order( $morder );
+		if ( pmpro_complete_async_checkout( $morder ) ) {
+			return 'Order #' . $morder->id . ' completed successfully.';
+		} else {
+			return 'Order #' . $morder->id . ' failed to complete.';
+		}
+	}
+
+	return 'Order #' . $morder->id . ' already completed (status: ' . $morder->status . ').';
+}
+
+/**
+ * Handle BILLING.SUBSCRIPTION.ACTIVATED — subscription checkout completion.
+ *
+ * Finds the PMPro token order by subscription transaction ID,
+ * gets the initial payment transaction, and completes checkout
+ * via pmpro_complete_async_checkout().
+ */
+function pmpro_paypal_handle_subscription_activated( $resource ) {
+	$subscription_id = $resource['id'] ?? '';
+	if ( empty( $subscription_id ) ) {
+		return 'No subscription ID in activation event.';
+	}
+
+	$gateway_env = get_option( 'pmpro_gateway_environment', 'sandbox' );
+	$api = new PMPro_PayPal_API();
+
+	// Find the token order by subscription_transaction_id.
+	$morder = null;
+	if ( method_exists( 'MemberOrder', 'get_order' ) ) {
+		$morder = MemberOrder::get_order( array(
+			'gateway'                     => 'paypal',
+			'gateway_environment'         => 'sandbox' === $gateway_env ? 'sandbox' : 'live',
+			'status'                      => 'token',
+			'subscription_transaction_id' => $subscription_id,
+		) );
+	}
+
+	if ( empty( $morder ) || empty( $morder->id ) ) {
+		return 'Token order not found for subscription ' . $subscription_id;
+	}
+
+	// Try to get the initial payment transaction ID.
+	$create_time = $resource['create_time'] ?? '';
+	if ( ! empty( $create_time ) ) {
+		$start_time   = date( 'c', strtotime( $create_time ) - 3600 );
+		$end_time     = date( 'c', strtotime( $create_time ) + 3600 );
+		$transactions = $api->get_subscription_transactions( $subscription_id, $start_time, $end_time );
+		if ( ! is_wp_error( $transactions ) && ! empty( $transactions['transactions'][0]['id'] ) ) {
+			$morder->payment_transaction_id = $transactions['transactions'][0]['id'];
+			$morder->saveOrder();
+		}
+	}
+
+	// Complete the checkout.
+	pmpro_pull_checkout_data_from_order( $morder );
+	if ( pmpro_complete_async_checkout( $morder ) ) {
+		return 'Order #' . $morder->id . ' completed successfully.';
+	} else {
+		return 'Order #' . $morder->id . ' failed to complete.';
+	}
 }
 
 /**

@@ -305,6 +305,22 @@ class PMPro_PayPal_API {
 	}
 
 	/**
+	 * Get subscription transactions within a time range.
+	 *
+	 * @param string $subscription_id Subscription ID.
+	 * @param string $start_time      ISO 8601 start time.
+	 * @param string $end_time        ISO 8601 end time.
+	 * @return array|WP_Error
+	 */
+	public function get_subscription_transactions( $subscription_id, $start_time, $end_time ) {
+		$query = http_build_query( array(
+			'start_time' => $start_time,
+			'end_time'   => $end_time,
+		) );
+		return $this->request( 'GET', '/v1/billing/subscriptions/' . urlencode( $subscription_id ) . '/transactions?' . $query );
+	}
+
+	/**
 	 * Cancel a subscription.
 	 *
 	 * @param string $subscription_id Subscription ID.

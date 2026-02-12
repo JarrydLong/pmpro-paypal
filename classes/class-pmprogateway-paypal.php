@@ -29,17 +29,9 @@ class PMProGateway_paypal extends PMProGateway {
 		if ( 'paypal' === $gateway ) {
 			add_filter( 'pmpro_required_billing_fields', array( 'PMProGateway_paypal', 'pmpro_required_billing_fields' ) );
 			add_filter( 'pmpro_include_billing_address_fields', '__return_false' );
-			add_filter( 'pmpro_include_payment_information_fields', array( 'PMProGateway_paypal', 'pmpro_include_payment_information_fields' ) );
+			add_filter( 'pmpro_include_payment_information_fields', '__return_false' );
 			add_filter( 'pmpro_checkout_default_submit_button', array( 'PMProGateway_paypal', 'pmpro_checkout_default_submit_button' ) );
-			add_action( 'pmpro_checkout_preheader', array( 'PMProGateway_paypal', 'pmpro_checkout_preheader' ) );
-			add_filter( 'pmpro_checkout_order', array( 'PMProGateway_paypal', 'pmpro_checkout_order' ) );
 		}
-
-		// AJAX endpoints.
-		add_action( 'wp_ajax_pmpro_paypal_create_order', array( 'PMProGateway_paypal', 'ajax_create_order' ) );
-		add_action( 'wp_ajax_nopriv_pmpro_paypal_create_order', array( 'PMProGateway_paypal', 'ajax_create_order' ) );
-		add_action( 'wp_ajax_pmpro_paypal_create_subscription', array( 'PMProGateway_paypal', 'ajax_create_subscription' ) );
-		add_action( 'wp_ajax_nopriv_pmpro_paypal_create_subscription', array( 'PMProGateway_paypal', 'ajax_create_subscription' ) );
 
 		// Refund hook.
 		add_filter( 'pmpro_process_refund_paypal', array( 'PMProGateway_paypal', 'process_refund' ), 10, 2 );
@@ -62,6 +54,7 @@ class PMProGateway_paypal extends PMProGateway {
 		$supports = array(
 			'subscription_sync'        => true,
 			'payment_method_updates'   => false,
+			'check_token_orders'       => true,
 		);
 		return empty( $supports[ $feature ] ) ? false : $supports[ $feature ];
 	}
@@ -162,6 +155,7 @@ class PMProGateway_paypal extends PMProGateway {
 		}
 
 		$events = array(
+			'CHECKOUT.ORDER.APPROVED',
 			'PAYMENT.SALE.COMPLETED',
 			'PAYMENT.SALE.REFUNDED',
 			'PAYMENT.CAPTURE.COMPLETED',
@@ -202,243 +196,25 @@ class PMProGateway_paypal extends PMProGateway {
 	}
 
 	/**
-	 * Replace payment information fields with PayPal button container.
-	 */
-	public static function pmpro_include_payment_information_fields( $include ) {
-		global $pmpro_requirebilling;
-		if ( ! $pmpro_requirebilling ) {
-			return $include;
-		}
-		?>
-		<div id="pmpro_paypal_fields" class="pmpro_checkout">
-			<hr />
-			<h2>
-				<span class="pmpro_checkout-h2-name"><?php esc_html_e( 'Payment Information', 'pmpro-paypal' ); ?></span>
-			</h2>
-			<div class="pmpro_checkout-fields">
-				<div id="pmpro-paypal-button-container"></div>
-				<input type="hidden" id="paypal_order_id" name="paypal_order_id" value="" />
-				<input type="hidden" id="paypal_subscription_id" name="paypal_subscription_id" value="" />
-			</div>
-		</div>
-		<?php
-		return false;
-	}
-
-	/**
-	 * Replace submit button — PayPal buttons handle submission.
+	 * Show a "Check Out with PayPal" submit button.
 	 */
 	public static function pmpro_checkout_default_submit_button( $show ) {
-		// The PayPal JS SDK buttons will submit the form, so hide the default submit.
-		// But we still need a fallback for free levels.
-		global $pmpro_requirebilling;
-		if ( $pmpro_requirebilling ) {
-			// PayPal buttons will handle it. Provide a hidden submit for form submission.
-			?>
-			<span id="pmpro_submit_span" style="display:none;">
-				<input type="hidden" name="submit-checkout" value="1" />
-				<input type="submit" id="pmpro_btn-submit" class="<?php echo esc_attr( pmpro_get_element_class( 'pmpro_btn pmpro_btn-submit-checkout', 'pmpro_btn-submit-checkout' ) ); ?>" value="<?php esc_attr_e( 'Submit and Check Out', 'pmpro-paypal' ); ?>" />
-			</span>
-			<?php
-			return false;
-		}
+		global $gateway, $pmpro_requirebilling;
+		?>
+		<span id="pmpro_paypal_checkout" <?php if ( 'paypal' !== $gateway || ! $pmpro_requirebilling ) { ?>style="display: none;"<?php } ?>>
+			<input type="hidden" name="submit-checkout" value="1" />
+			<button type="submit" id="pmpro_btn-submit-paypal" class="<?php echo esc_attr( pmpro_get_element_class( 'pmpro_btn pmpro_btn-submit-checkout pmpro_btn-submit-checkout-paypal' ) ); ?>">
+				<?php esc_html_e( 'Check Out with PayPal', 'pmpro-paypal' ); ?>
+			</button>
+		</span>
 
-		// Free level — show normal submit.
-		return $show;
-	}
+		<span id="pmpro_submit_span" <?php if ( 'paypal' === $gateway && $pmpro_requirebilling ) { ?>style="display: none;"<?php } ?>>
+			<input type="hidden" name="submit-checkout" value="1" />
+			<input type="submit" id="pmpro_btn-submit" class="<?php echo esc_attr( pmpro_get_element_class( 'pmpro_btn pmpro_btn-submit-checkout', 'pmpro_btn-submit-checkout' ) ); ?>" value="<?php if ( $pmpro_requirebilling ) { esc_attr_e( 'Submit and Check Out', 'pmpro-paypal' ); } else { esc_attr_e( 'Submit and Confirm', 'pmpro-paypal' ); } ?>" />
+		</span>
+		<?php
 
-	/**
-	 * Enqueue scripts on checkout page.
-	 */
-	public static function pmpro_checkout_preheader() {
-		global $pmpro_level, $pmpro_requirebilling;
-
-		if ( ! $pmpro_requirebilling ) {
-			return;
-		}
-
-		$client_id   = get_option( 'pmpro_paypal_client_id' );
-		$environment = get_option( 'pmpro_gateway_environment' );
-		global $pmpro_currency;
-		$currency = ! empty( $pmpro_currency ) ? $pmpro_currency : 'USD';
-		$is_recurring = ! empty( $pmpro_level ) && pmpro_isLevelRecurring( $pmpro_level );
-
-		// PayPal JS SDK.
-		$sdk_args = array(
-			'client-id'  => $client_id,
-			'currency'   => $currency,
-			'components' => 'buttons',
-		);
-		if ( $is_recurring ) {
-			$sdk_args['intent'] = 'subscription';
-			$sdk_args['vault']  = 'true';
-		} else {
-			$sdk_args['intent'] = 'capture';
-		}
-		$sdk_url = add_query_arg( $sdk_args, 'https://www.paypal.com/sdk/js' );
-
-		wp_enqueue_script( 'pmpro-paypal-sdk', $sdk_url, array(), null, true );
-		wp_enqueue_script( 'pmpro-paypal', PMPRO_PAYPAL_URL . 'js/pmpro-paypal.js', array( 'pmpro-paypal-sdk', 'jquery' ), PMPRO_PAYPAL_VERSION, true );
-
-		wp_localize_script( 'pmpro-paypal', 'pmproPayPal', array(
-			'ajaxUrl'     => admin_url( 'admin-ajax.php' ),
-			'nonce'       => wp_create_nonce( 'pmpro_paypal_nonce' ),
-			'isRecurring' => $is_recurring,
-			'clientId'    => $client_id,
-			'currency'    => $currency,
-			'buttonStyle' => apply_filters( 'pmpro_paypal_button_style', array(
-				'layout' => 'vertical',
-				'color'  => 'gold',
-				'shape'  => 'rect',
-				'label'  => 'paypal',
-			) ),
-		) );
-	}
-
-	/**
-	 * Capture PayPal IDs from form submission into the order object.
-	 */
-	public static function pmpro_checkout_order( $order ) {
-		if ( ! empty( $_REQUEST['paypal_order_id'] ) ) {
-			$order->paypal_order_id = sanitize_text_field( $_REQUEST['paypal_order_id'] );
-		}
-		if ( ! empty( $_REQUEST['paypal_subscription_id'] ) ) {
-			$order->paypal_subscription_id = sanitize_text_field( $_REQUEST['paypal_subscription_id'] );
-		}
-		return $order;
-	}
-
-	// ---------------------------------------------------------------
-	// AJAX: Create Order (one-time)
-	// ---------------------------------------------------------------
-
-	/**
-	 * AJAX handler to create a PayPal order for one-time payment.
-	 */
-	public static function ajax_create_order() {
-		check_ajax_referer( 'pmpro_paypal_nonce', 'nonce' );
-
-		$level_id = intval( $_POST['level_id'] ?? 0 );
-		if ( empty( $level_id ) ) {
-			wp_send_json_error( array( 'message' => 'No level specified.' ) );
-		}
-
-		// Get the level with pricing from the checkout context.
-		$level = pmpro_getLevelAtCheckout( $level_id );
-		if ( empty( $level ) ) {
-			wp_send_json_error( array( 'message' => 'Invalid level.' ) );
-		}
-
-		global $pmpro_currency;
-		$currency = ! empty( $pmpro_currency ) ? $pmpro_currency : 'USD';
-		$amount   = pmpro_round_price_as_string( (float) $level->initial_payment );
-
-		if ( (float) $amount <= 0 ) {
-			wp_send_json_error( array( 'message' => 'No payment required.' ) );
-		}
-
-		$api = new PMPro_PayPal_API();
-
-		$order_args = array(
-			'intent'         => 'CAPTURE',
-			'purchase_units' => array(
-				array(
-					'amount'      => array(
-						'currency_code' => $currency,
-						'value'         => $amount,
-					),
-					'description' => substr( $level->name, 0, 127 ),
-					'custom_id'   => get_current_user_id() . '_' . $level_id,
-				),
-			),
-		);
-
-		/**
-		 * Filter the PayPal order args before creation.
-		 *
-		 * @param array $order_args PayPal order arguments.
-		 * @param object $level PMPro level object.
-		 */
-		$order_args = apply_filters( 'pmpro_paypal_create_order_args', $order_args, $level );
-
-		$result = $api->create_order( $order_args );
-
-		if ( is_wp_error( $result ) ) {
-			wp_send_json_error( array( 'message' => $result->get_error_message() ) );
-		}
-
-		wp_send_json_success( array( 'orderID' => $result['id'] ) );
-	}
-
-	// ---------------------------------------------------------------
-	// AJAX: Create Subscription (recurring)
-	// ---------------------------------------------------------------
-
-	/**
-	 * AJAX handler to create a PayPal subscription.
-	 */
-	public static function ajax_create_subscription() {
-		check_ajax_referer( 'pmpro_paypal_nonce', 'nonce' );
-
-		$level_id = intval( $_POST['level_id'] ?? 0 );
-		if ( empty( $level_id ) ) {
-			wp_send_json_error( array( 'message' => 'No level specified.' ) );
-		}
-
-		$level = pmpro_getLevelAtCheckout( $level_id );
-		if ( empty( $level ) ) {
-			wp_send_json_error( array( 'message' => 'Invalid level.' ) );
-		}
-
-		global $pmpro_currency;
-		$currency = ! empty( $pmpro_currency ) ? $pmpro_currency : 'USD';
-
-		// Get or create the PayPal plan for this level/price combo.
-		$plan_id = self::get_or_create_plan( $level, $currency );
-		if ( is_wp_error( $plan_id ) ) {
-			wp_send_json_error( array( 'message' => $plan_id->get_error_message() ) );
-		}
-
-		$api = new PMPro_PayPal_API();
-
-		$subscription_args = array(
-			'plan_id' => $plan_id,
-			'subscriber' => array(
-				'email_address' => wp_get_current_user()->user_email,
-			),
-			'application_context' => array(
-				'brand_name'          => get_bloginfo( 'name' ),
-				'user_action'         => 'SUBSCRIBE_NOW',
-				'payment_method'      => array(
-					'payer_selected'  => 'PAYPAL',
-					'payee_preferred' => 'IMMEDIATE_PAYMENT_REQUIRED',
-				),
-			),
-		);
-
-		// Setup fee: if initial_payment differs from recurring amount.
-		$initial = (float) $level->initial_payment;
-		$recurring = (float) $level->billing_amount;
-		if ( $initial > 0 && abs( $initial - $recurring ) > 0.01 ) {
-			// Setup fee is handled at the plan level — see get_or_create_plan().
-			// If initial < recurring, we pass 0 setup fee and a trial cycle handles it.
-		}
-
-		/**
-		 * Filter the PayPal subscription args before creation.
-		 *
-		 * @param array $subscription_args PayPal subscription arguments.
-		 * @param object $level PMPro level object.
-		 */
-		$subscription_args = apply_filters( 'pmpro_paypal_create_subscription_args', $subscription_args, $level );
-
-		$result = $api->create_subscription( $subscription_args );
-
-		if ( is_wp_error( $result ) ) {
-			wp_send_json_error( array( 'message' => $result->get_error_message() ) );
-		}
-
-		wp_send_json_success( array( 'subscriptionID' => $result['id'] ) );
+		return false;
 	}
 
 	// ---------------------------------------------------------------
@@ -656,109 +432,257 @@ class PMProGateway_paypal extends PMProGateway {
 	}
 
 	// ---------------------------------------------------------------
-	// Process (checkout)
+	// Process (checkout — offsite redirect)
 	// ---------------------------------------------------------------
 
 	/**
-	 * Process checkout payment.
+	 * Process checkout payment via offsite redirect to PayPal.
+	 *
+	 * The form submits first (user + order created via standard PMPro flow),
+	 * then we redirect to PayPal for approval. Webhook completes checkout
+	 * via pmpro_complete_async_checkout().
 	 *
 	 * @param MemberOrder $order The order to process.
-	 * @return bool True on success.
+	 * @return bool Always false (checkout completed async via webhook).
 	 */
 	public function process( &$order ) {
-		$api = new PMPro_PayPal_API();
-
-		// Recurring subscription flow.
-		if ( ! empty( $order->paypal_subscription_id ) ) {
-			return $this->process_subscription( $order, $api );
-		}
-
-		// One-time payment flow.
-		if ( ! empty( $order->paypal_order_id ) ) {
-			return $this->process_order( $order, $api );
-		}
-
-		// No PayPal ID — free level or error.
+		// Free level — no payment needed.
 		if ( (float) $order->InitialPayment <= 0 && ! pmpro_isLevelRecurring( $order->membership_level ) ) {
 			$order->status = 'success';
 			return true;
 		}
 
-		$order->error = __( 'No PayPal payment information received.', 'pmpro-paypal' );
-		return false;
-	}
+		// Prepare for offsite async payment.
+		$order->status = 'token';
+		$order->saveOrder();
+		pmpro_save_checkout_data_to_order( $order );
 
-	/**
-	 * Process one-time order (capture).
-	 */
-	private function process_order( &$order, $api ) {
-		$paypal_order_id = sanitize_text_field( $order->paypal_order_id );
+		$api   = new PMPro_PayPal_API();
+		$level = $order->getMembershipLevelAtCheckout();
 
-		// Capture the order.
-		$result = $api->capture_order( $paypal_order_id );
-		if ( is_wp_error( $result ) ) {
-			$order->error      = $result->get_error_message();
-			$order->shorterror = $result->get_error_message();
-			return false;
-		}
+		global $pmpro_currency;
+		$currency = ! empty( $pmpro_currency ) ? $pmpro_currency : 'USD';
 
-		if ( empty( $result['status'] ) || 'COMPLETED' !== $result['status'] ) {
-			$order->error = __( 'PayPal payment was not completed.', 'pmpro-paypal' );
-			return false;
-		}
+		// Calculate initial payment amount with tax.
+		$initial_subtotal       = $order->subtotal;
+		$initial_tax            = $order->getTaxForPrice( $initial_subtotal );
+		$initial_payment_amount = pmpro_round_price( (float) $initial_subtotal + (float) $initial_tax );
 
-		// Extract capture ID.
-		$capture_id = '';
-		if ( ! empty( $result['purchase_units'][0]['payments']['captures'][0]['id'] ) ) {
-			$capture_id = $result['purchase_units'][0]['payments']['captures'][0]['id'];
-		}
+		if ( pmpro_isLevelRecurring( $level ) ) {
+			// --- Recurring subscription flow ---
 
-		$order->payment_transaction_id = $capture_id;
-		$order->status                 = 'success';
+			// Calculate recurring amount with tax.
+			$recurring_subtotal       = $level->billing_amount;
+			$recurring_tax            = $order->getTaxForPrice( $recurring_subtotal );
+			$recurring_payment_amount = pmpro_round_price( (float) $recurring_subtotal + (float) $recurring_tax );
 
-		// Store PayPal IDs in order meta for refunds.
-		if ( method_exists( $order, 'update_order_meta' ) ) {
-			$order->update_order_meta( 'paypal_order_id', $paypal_order_id );
-			$order->update_order_meta( 'paypal_capture_id', $capture_id );
-		}
+			// Build a level clone with tax-inclusive amounts for plan creation.
+			$plan_level = clone $level;
+			$plan_level->initial_payment = $initial_payment_amount;
+			$plan_level->billing_amount  = $recurring_payment_amount;
+			if ( ! empty( $plan_level->trial_amount ) ) {
+				$trial_tax = $order->getTaxForPrice( $plan_level->trial_amount );
+				$plan_level->trial_amount = pmpro_round_price( (float) $plan_level->trial_amount + (float) $trial_tax );
+			}
 
-		return true;
-	}
+			// Get or create PayPal product and plan.
+			$plan_id = self::get_or_create_plan( $plan_level, $currency );
+			if ( is_wp_error( $plan_id ) ) {
+				$order->error      = $plan_id->get_error_message();
+				$order->shorterror = $plan_id->get_error_message();
+				return false;
+			}
 
-	/**
-	 * Process subscription approval.
-	 */
-	private function process_subscription( &$order, $api ) {
-		$subscription_id = sanitize_text_field( $order->paypal_subscription_id );
+			// Calculate profile start date (applies pmpro_set_profile_date filter).
+			$profile_start_date = pmpro_calculate_profile_start_date( $order, 'c' );
 
-		// Verify subscription is active.
-		$result = $api->get_subscription( $subscription_id );
-		if ( is_wp_error( $result ) ) {
-			$order->error      = $result->get_error_message();
-			$order->shorterror = $result->get_error_message();
-			return false;
-		}
-
-		$status = $result['status'] ?? '';
-		if ( ! in_array( $status, array( 'ACTIVE', 'APPROVED' ), true ) ) {
-			$order->error = sprintf(
-				__( 'PayPal subscription status is %s, expected ACTIVE.', 'pmpro-paypal' ),
-				esc_html( $status )
+			$subscription_args = array(
+				'plan_id'    => $plan_id,
+				'start_time' => $profile_start_date,
+				'subscriber' => array(
+					'email_address' => $order->Email,
+				),
+				'application_context' => array(
+					'brand_name'          => get_bloginfo( 'name' ),
+					'shipping_preference' => 'NO_SHIPPING',
+					'user_action'         => 'SUBSCRIBE_NOW',
+					'return_url'          => apply_filters( 'pmpro_confirmation_url', add_query_arg( 'pmpro_level', $level->id, pmpro_url( 'confirmation' ) ), $order->user_id, $level ),
+					'cancel_url'          => add_query_arg( 'pmpro_level', $level->id, pmpro_url( 'checkout' ) ),
+				),
 			);
+
+			/**
+			 * Filter the PayPal subscription args before creation.
+			 *
+			 * @param array  $subscription_args PayPal subscription arguments.
+			 * @param object $level             PMPro level object.
+			 */
+			$subscription_args = apply_filters( 'pmpro_paypal_create_subscription_args', $subscription_args, $level );
+
+			$result = $api->create_subscription( $subscription_args );
+			if ( is_wp_error( $result ) ) {
+				$order->error      = $result->get_error_message();
+				$order->shorterror = $result->get_error_message();
+				return false;
+			}
+
+			// Save subscription ID to order.
+			$order->subscription_transaction_id = $result['id'];
+			$order->saveOrder();
+
+			// Find approve link and redirect.
+			$links = $result['links'] ?? array();
+			foreach ( $links as $link ) {
+				if ( 'approve' === ( $link['rel'] ?? '' ) ) {
+					wp_redirect( $link['href'] );
+					exit;
+				}
+			}
+
+			$order->error      = __( 'Could not find PayPal approval link.', 'pmpro-paypal' );
+			$order->shorterror = $order->error;
+			return false;
+
+		} else {
+			// --- One-time payment flow ---
+
+			$order_args = array(
+				'intent'         => 'CAPTURE',
+				'purchase_units' => array(
+					array(
+						'amount' => array(
+							'currency_code' => $currency,
+							'value'         => (string) $initial_payment_amount,
+						),
+						'description' => substr( $level->name, 0, 127 ),
+					),
+				),
+				'payment_source' => array(
+					'paypal' => array(
+						'experience_context' => array(
+							'payment_method_preference' => 'IMMEDIATE_PAYMENT_REQUIRED',
+							'shipping_preference'       => 'NO_SHIPPING',
+							'user_action'               => 'PAY_NOW',
+							'return_url'                => apply_filters( 'pmpro_confirmation_url', add_query_arg( 'pmpro_level', $level->id, pmpro_url( 'confirmation' ) ), $order->user_id, $level ),
+							'cancel_url'                => add_query_arg( 'pmpro_level', $level->id, pmpro_url( 'checkout' ) ),
+						),
+					),
+				),
+			);
+
+			/**
+			 * Filter the PayPal order args before creation.
+			 *
+			 * @param array  $order_args PayPal order arguments.
+			 * @param object $level      PMPro level object.
+			 */
+			$order_args = apply_filters( 'pmpro_paypal_create_order_args', $order_args, $level );
+
+			$result = $api->create_order( $order_args );
+			if ( is_wp_error( $result ) ) {
+				$order->error      = $result->get_error_message();
+				$order->shorterror = $result->get_error_message();
+				return false;
+			}
+
+			// Save PayPal order ID to order meta.
+			update_pmpro_membership_order_meta( $order->id, 'paypal_order_id', $result['id'] );
+
+			// Find payer-action or approve link and redirect.
+			$links = $result['links'] ?? array();
+			foreach ( $links as $link ) {
+				if ( in_array( $link['rel'] ?? '', array( 'payer-action', 'approve' ), true ) ) {
+					wp_redirect( $link['href'] );
+					exit;
+				}
+			}
+
+			$order->error      = __( 'Could not find PayPal approval link.', 'pmpro-paypal' );
+			$order->shorterror = $order->error;
 			return false;
 		}
+	}
 
-		$order->subscription_transaction_id = $subscription_id;
-		$order->payment_transaction_id      = $subscription_id; // Backfilled by webhook.
-		$order->status                      = 'success';
-		$order->payment_type                = 'PayPal';
+	// ---------------------------------------------------------------
+	// Check Token Orders (async checkout completion)
+	// ---------------------------------------------------------------
 
-		// Store in order meta.
-		if ( method_exists( $order, 'update_order_meta' ) ) {
-			$order->update_order_meta( 'paypal_subscription_id', $subscription_id );
+	/**
+	 * Check whether the payment for a token order has been completed at PayPal.
+	 *
+	 * Called by PMPro core when the user returns from PayPal before the
+	 * webhook fires. Polls PayPal to check order/subscription status
+	 * and completes checkout if ready.
+	 *
+	 * @param MemberOrder $order The token order to check.
+	 * @return true|string True on success, error message string on failure.
+	 */
+	public function check_token_order( $order ) {
+		if ( 'token' !== $order->status ) {
+			return __( 'This is not a token order.', 'pmpro-paypal' );
 		}
 
-		return true;
+		$api = new PMPro_PayPal_API();
+
+		// Check for one-time payment via PayPal order ID in meta.
+		$paypal_order_id = get_pmpro_membership_order_meta( $order->id, 'paypal_order_id', true );
+
+		if ( empty( $paypal_order_id ) && empty( $order->subscription_transaction_id ) ) {
+			return __( 'No PayPal order ID or subscription transaction ID found.', 'pmpro-paypal' );
+		}
+
+		if ( ! empty( $paypal_order_id ) ) {
+			// --- One-time payment ---
+
+			$paypal_order = $api->get_order( $paypal_order_id );
+			if ( is_wp_error( $paypal_order ) ) {
+				return __( 'Could not get order information.', 'pmpro-paypal' ) . ' ' . $paypal_order->get_error_message();
+			}
+
+			// If approved but not captured, capture it.
+			if ( 'APPROVED' === ( $paypal_order['status'] ?? '' ) ) {
+				$capture_result = $api->capture_order( $paypal_order_id );
+				if ( is_wp_error( $capture_result ) ) {
+					return __( 'Could not capture payment.', 'pmpro-paypal' ) . ' ' . $capture_result->get_error_message();
+				}
+				$paypal_order = $capture_result;
+			}
+
+			if ( 'COMPLETED' !== ( $paypal_order['status'] ?? '' ) ) {
+				return __( 'Order is not yet completed.', 'pmpro-paypal' );
+			}
+
+			// Set payment transaction ID from capture.
+			if ( ! empty( $paypal_order['purchase_units'][0]['payments']['captures'][0]['id'] ) ) {
+				$order->payment_transaction_id = $paypal_order['purchase_units'][0]['payments']['captures'][0]['id'];
+			}
+		} else {
+			// --- Subscription ---
+
+			$result = $api->get_subscription( $order->subscription_transaction_id );
+			if ( is_wp_error( $result ) ) {
+				return __( 'Could not get subscription information.', 'pmpro-paypal' ) . ' ' . $result->get_error_message();
+			}
+
+			if ( 'ACTIVE' !== ( $result['status'] ?? '' ) ) {
+				return __( 'Subscription is not yet active.', 'pmpro-paypal' );
+			}
+
+			// Try to get the initial payment transaction ID.
+			$create_time = $result['create_time'] ?? '';
+			if ( ! empty( $create_time ) ) {
+				$start_time   = date( 'c', strtotime( $create_time ) - 3600 );
+				$end_time     = date( 'c', strtotime( $create_time ) + 3600 );
+				$transactions = $api->get_subscription_transactions( $order->subscription_transaction_id, $start_time, $end_time );
+				if ( ! is_wp_error( $transactions ) && ! empty( $transactions['transactions'][0]['id'] ) ) {
+					$order->payment_transaction_id = $transactions['transactions'][0]['id'];
+				}
+			}
+		}
+
+		// Complete the checkout.
+		pmpro_pull_checkout_data_from_order( $order );
+		return pmpro_complete_async_checkout( $order );
 	}
 
 	// ---------------------------------------------------------------
