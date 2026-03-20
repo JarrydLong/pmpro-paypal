@@ -21,6 +21,9 @@ class PMProGateway_paypal extends PMProGateway {
 	 * Run on WP init.
 	 */
 	public static function init() {
+		// Migrate legacy shared options to per-environment options.
+		self::maybe_migrate_legacy_options();
+
 		// Register gateway.
 		add_filter( 'pmpro_gateways', array( 'PMProGateway_paypal', 'pmpro_gateways' ) );
 
@@ -60,6 +63,83 @@ class PMProGateway_paypal extends PMProGateway {
 	}
 
 	// ---------------------------------------------------------------
+	// Helpers
+	// ---------------------------------------------------------------
+
+	/**
+	 * Get per-environment option names for PayPal settings.
+	 *
+	 * Returns option names scoped to the current gateway environment
+	 * so sandbox and live credentials/webhook IDs don't collide.
+	 *
+	 * @param string|null $environment Override environment. Defaults to current.
+	 * @return array {
+	 *     @type string $client_id     Option name for client ID.
+	 *     @type string $client_secret Option name for client secret.
+	 *     @type string $webhook_id    Option name for webhook ID.
+	 * }
+	 */
+	public static function get_option_names( $environment = null ) {
+		if ( null === $environment ) {
+			$environment = get_option( 'pmpro_gateway_environment', 'sandbox' );
+		}
+		$suffix = ( 'sandbox' === $environment ) ? '_sandbox' : '_live';
+		return array(
+			'client_id'     => 'pmpro_paypal_client_id' . $suffix,
+			'client_secret' => 'pmpro_paypal_client_secret' . $suffix,
+			'webhook_id'    => 'pmpro_paypal_webhook_id' . $suffix,
+		);
+	}
+
+	/**
+	 * Get the option name for the webhook ID in the current environment.
+	 *
+	 * @return string Option name.
+	 */
+	public static function get_webhook_id_option_name() {
+		$names = self::get_option_names();
+		return $names['webhook_id'];
+	}
+
+	/**
+	 * Migrate legacy shared options to per-environment options.
+	 *
+	 * Pre-1.1 stored a single pmpro_paypal_client_id, pmpro_paypal_client_secret,
+	 * and pmpro_paypal_webhook_id for both environments. This migrates them to the
+	 * current environment's scoped option names and cleans up the legacy keys.
+	 */
+	public static function maybe_migrate_legacy_options() {
+		// Only run once — check for the legacy client_id option.
+		$legacy_client_id = get_option( 'pmpro_paypal_client_id', '' );
+		if ( empty( $legacy_client_id ) ) {
+			return;
+		}
+
+		$environment  = get_option( 'pmpro_gateway_environment', 'sandbox' );
+		$option_names = self::get_option_names( $environment );
+
+		// Only migrate if the new per-environment option is empty.
+		if ( empty( get_option( $option_names['client_id'], '' ) ) ) {
+			update_option( $option_names['client_id'], $legacy_client_id );
+		}
+
+		$legacy_secret = get_option( 'pmpro_paypal_client_secret', '' );
+		if ( ! empty( $legacy_secret ) && empty( get_option( $option_names['client_secret'], '' ) ) ) {
+			update_option( $option_names['client_secret'], $legacy_secret );
+		}
+
+		$legacy_webhook_id = get_option( 'pmpro_paypal_webhook_id', '' );
+		if ( ! empty( $legacy_webhook_id ) && empty( get_option( $option_names['webhook_id'], '' ) ) ) {
+			update_option( $option_names['webhook_id'], $legacy_webhook_id );
+		}
+
+		// Clean up legacy options so this migration doesn't run again.
+		delete_option( 'pmpro_paypal_client_id' );
+		delete_option( 'pmpro_paypal_client_secret' );
+		delete_option( 'pmpro_paypal_webhook_id' );
+	}
+
+	// ---------------------------------------------------------------
 	// Settings
 	// ---------------------------------------------------------------
 
@@ -67,9 +147,10 @@ class PMProGateway_paypal extends PMProGateway {
 	 * Display settings fields.
 	 */
 	public static function show_settings_fields() {
-		$client_id      = get_option( 'pmpro_paypal_client_id' );
-		$client_secret  = get_option( 'pmpro_paypal_client_secret' );
-		$webhook_id     = get_option( 'pmpro_paypal_webhook_id' );
+		$option_names   = self::get_option_names();
+		$client_id      = get_option( $option_names['client_id'] );
+		$client_secret  = get_option( $option_names['client_secret'] );
+		$webhook_id     = get_option( $option_names['webhook_id'] );
 		$webhook_url    = rest_url( 'pmpro-paypal/v1/webhook' );
 		?>
 		<div id="pmpro_paypal" class="pmpro_section" data-visibility="shown" data-activated="true">
@@ -122,16 +203,23 @@ class PMProGateway_paypal extends PMProGateway {
 	 * Save settings and auto-register webhook.
 	 */
 	public static function save_settings_fields() {
+		$option_names = self::get_option_names();
+		$environment  = get_option( 'pmpro_gateway_environment', 'sandbox' );
+
 		if ( isset( $_REQUEST['paypal_client_id'] ) ) {
-			update_option( 'pmpro_paypal_client_id', sanitize_text_field( $_REQUEST['paypal_client_id'] ) );
+			update_option( $option_names['client_id'], sanitize_text_field( $_REQUEST['paypal_client_id'] ) );
 		}
 		if ( isset( $_REQUEST['paypal_client_secret'] ) ) {
-			update_option( 'pmpro_paypal_client_secret', sanitize_text_field( $_REQUEST['paypal_client_secret'] ) );
+			update_option( $option_names['client_secret'], sanitize_text_field( $_REQUEST['paypal_client_secret'] ) );
 		}
 
+		// Clear cached OAuth token so stale tokens from a previous
+		// PayPal app don't persist after credential changes.
+		delete_transient( 'pmpro_paypal_token_' . $environment );
+
 		// Auto-register webhook if credentials are set and no webhook yet.
-		$client_id = get_option( 'pmpro_paypal_client_id' );
-		$secret    = get_option( 'pmpro_paypal_client_secret' );
+		$client_id = get_option( $option_names['client_id'] );
+		$secret    = get_option( $option_names['client_secret'] );
 		if ( ! empty( $client_id ) && ! empty( $secret ) ) {
 			self::maybe_register_webhook();
 		}
@@ -141,7 +229,8 @@ class PMProGateway_paypal extends PMProGateway {
 	 * Register webhook at PayPal if not already registered.
 	 */
 	public static function maybe_register_webhook() {
-		$webhook_id = get_option( 'pmpro_paypal_webhook_id' );
+		$option_name = self::get_webhook_id_option_name();
+		$webhook_id  = get_option( $option_name );
 		if ( ! empty( $webhook_id ) ) {
 			return;
 		}
@@ -170,7 +259,7 @@ class PMProGateway_paypal extends PMProGateway {
 
 		$result = $api->create_webhook( $webhook_url, $events );
 		if ( ! is_wp_error( $result ) && ! empty( $result['id'] ) ) {
-			update_option( 'pmpro_paypal_webhook_id', sanitize_text_field( $result['id'] ) );
+			update_option( $option_name, sanitize_text_field( $result['id'] ) );
 		}
 	}
 
@@ -312,17 +401,13 @@ class PMProGateway_paypal extends PMProGateway {
 		}
 		$billing_cycles[] = $regular_cycle;
 
-		// Setup fee (when initial payment differs from recurring).
+		// Setup fee — charged immediately at subscription activation.
+		// PayPal's first regular billing cycle starts at start_time (one period out),
+		// so the setup fee is how the initial payment is collected.
 		$setup_fee = array(
-			'value'         => '0.00',
+			'value'         => (float) $initial > 0 ? $initial : '0.00',
 			'currency_code' => $currency,
 		);
-		if ( (float) $initial > 0 && abs( (float) $initial - (float) $recurring ) > 0.01 ) {
-			$setup_fee = array(
-				'value'         => $initial,
-				'currency_code' => $currency,
-			);
-		}
 
 		// Plan description.
 		$plan_name = substr( $level->name . ' - ' . get_bloginfo( 'name' ), 0, 127 );
@@ -756,12 +841,10 @@ class PMProGateway_paypal extends PMProGateway {
 			$update_array['next_payment_date'] = date( 'Y-m-d H:i:s', strtotime( $result['billing_info']['next_billing_time'] ) );
 		}
 
-		// Billing amount from plan info.
-		if ( ! empty( $result['billing_info']['last_payment']['amount']['value'] ) ) {
-			$update_array['billing_amount'] = $result['billing_info']['last_payment']['amount']['value'];
-		}
-
-		// Cycle info from plan definition.
+		// Cycle info and billing amount from plan definition.
+		// We pull billing_amount from the plan's REGULAR cycle pricing rather
+		// than billing_info.last_payment, which can reflect trial amounts,
+		// setup fees, or other non-steady-state payments.
 		if ( ! empty( $result['plan_id'] ) ) {
 			$plan = $api->get_plan( $result['plan_id'] );
 			if ( ! is_wp_error( $plan ) && ! empty( $plan['billing_cycles'] ) ) {
@@ -770,6 +853,9 @@ class PMProGateway_paypal extends PMProGateway {
 						$update_array['cycle_number'] = $cycle['frequency']['interval_count'] ?? 1;
 						$period = $cycle['frequency']['interval_unit'] ?? 'MONTH';
 						$update_array['cycle_period'] = ucfirst( strtolower( $period ) );
+						if ( ! empty( $cycle['pricing_scheme']['fixed_price']['value'] ) ) {
+							$update_array['billing_amount'] = $cycle['pricing_scheme']['fixed_price']['value'];
+						}
 						break;
 					}
 				}
@@ -801,26 +887,33 @@ class PMProGateway_paypal extends PMProGateway {
 
 		$api = new PMPro_PayPal_API();
 
-		// Get the capture ID from order meta.
+		// Get the capture ID from order meta (set for one-time payments).
 		$capture_id = '';
 		if ( method_exists( $order, 'get_order_meta' ) ) {
 			$capture_id = $order->get_order_meta( 'paypal_capture_id', true );
 		}
 
-		// Fallback: for subscription payments, use payment_transaction_id.
-		if ( empty( $capture_id ) && ! empty( $order->payment_transaction_id ) ) {
-			$capture_id = $order->payment_transaction_id;
-		}
+		// Get the transaction ID (capture ID for one-time, sale ID for renewals).
+		$transaction_id = $order->payment_transaction_id;
 
-		if ( empty( $capture_id ) ) {
-			$order->error = __( 'No capture ID found for this order.', 'pmpro-paypal' );
+		if ( empty( $capture_id ) && empty( $transaction_id ) ) {
+			$order->error = __( 'No transaction ID found for this order.', 'pmpro-paypal' );
 			return false;
 		}
 
-		// Determine if this is a subscription payment (PAYMENT.SALE) or one-time (PAYMENT.CAPTURE).
-		// Subscription payments use sale IDs (start with a number), captures use capture IDs.
-		// Try refund_capture first, fall back to refund_sale if it fails.
-		$result = $api->refund_capture( $capture_id );
+		// If we have a capture ID from order meta, refund the capture.
+		// Otherwise, try capture refund first (for one-time orders completed
+		// via check_token_order which don't store paypal_capture_id meta),
+		// then fall back to sale refund (for subscription renewal payments).
+		if ( ! empty( $capture_id ) ) {
+			$result = $api->refund_capture( $capture_id );
+		} else {
+			$result = $api->refund_capture( $transaction_id );
+			if ( is_wp_error( $result ) ) {
+				// Capture refund failed — try as a sale refund (subscription renewals).
+				$result = $api->refund_sale( $transaction_id );
+			}
+		}
 
 		if ( is_wp_error( $result ) ) {
 			$order->error = $result->get_error_message();

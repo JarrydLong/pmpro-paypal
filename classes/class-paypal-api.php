@@ -32,9 +32,21 @@ class PMPro_PayPal_API {
 	 * Constructor — set credentials and base URL from PMPro settings.
 	 */
 	public function __construct() {
-		$environment        = get_option( 'pmpro_gateway_environment', 'sandbox' );
-		$this->client_id    = get_option( 'pmpro_paypal_client_id', '' );
-		$this->client_secret = get_option( 'pmpro_paypal_client_secret', '' );
+		$environment = get_option( 'pmpro_gateway_environment', 'sandbox' );
+
+		// Read per-environment credentials via the gateway class helper.
+		if ( class_exists( 'PMProGateway_paypal' ) ) {
+			$option_names = PMProGateway_paypal::get_option_names( $environment );
+		} else {
+			$suffix = ( 'sandbox' === $environment ) ? '_sandbox' : '_live';
+			$option_names = array(
+				'client_id'     => 'pmpro_paypal_client_id' . $suffix,
+				'client_secret' => 'pmpro_paypal_client_secret' . $suffix,
+			);
+		}
+
+		$this->client_id     = get_option( $option_names['client_id'], '' );
+		$this->client_secret = get_option( $option_names['client_secret'], '' );
 
 		if ( 'sandbox' === $environment ) {
 			$this->base_url = 'https://api-m.sandbox.paypal.com';
@@ -241,6 +253,29 @@ class PMPro_PayPal_API {
 			);
 		}
 		return $this->request( 'POST', '/v2/payments/captures/' . urlencode( $capture_id ) . '/refund', $body );
+	}
+
+	/**
+	 * Refund a sale (subscription renewal payment).
+	 *
+	 * Subscription renewals use the Payments v1 Sale resource,
+	 * not the v2 Capture resource.
+	 *
+	 * @param string     $sale_id Sale ID.
+	 * @param float|null $amount  Optional partial refund amount.
+	 * @return array|WP_Error
+	 */
+	public function refund_sale( $sale_id, $amount = null ) {
+		$body = array();
+		if ( $amount !== null ) {
+			global $pmpro_currency;
+			$currency = ! empty( $pmpro_currency ) ? $pmpro_currency : 'USD';
+			$body['amount'] = array(
+				'total'    => pmpro_round_price_as_string( (float) $amount ),
+				'currency' => $currency,
+			);
+		}
+		return $this->request( 'POST', '/v1/payments/sale/' . urlencode( $sale_id ) . '/refund', $body );
 	}
 
 	// ---------------------------------------------------------------

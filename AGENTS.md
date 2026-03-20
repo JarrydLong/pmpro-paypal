@@ -88,10 +88,12 @@ Hooks registered only when `paypal` is the active gateway:
 
 PMPro calls `PMProGateway_paypal::show_settings_fields()` and `PMProGateway_paypal::save_settings_fields()` directly via `call_user_func()` from `adminpages/paymentsettings.php`. No hooks needed — PMPro resolves the class name from the gateway slug.
 
-**Options stored:**
-- `pmpro_paypal_client_id` — PayPal Client ID
-- `pmpro_paypal_client_secret` — PayPal Client Secret
-- `pmpro_paypal_webhook_id` — Auto-registered webhook ID (set automatically on first credential save)
+**Options stored (per-environment):**
+- `pmpro_paypal_client_id_live` / `pmpro_paypal_client_id_sandbox` — PayPal Client ID
+- `pmpro_paypal_client_secret_live` / `pmpro_paypal_client_secret_sandbox` — PayPal Client Secret
+- `pmpro_paypal_webhook_id_live` / `pmpro_paypal_webhook_id_sandbox` — Auto-registered webhook ID (set automatically on first credential save)
+
+Option names are resolved via `PMProGateway_paypal::get_option_names()` based on the current `pmpro_gateway_environment`. A one-time migration in `maybe_migrate_legacy_options()` moves pre-1.1 unsuffixed options to the current environment's scoped keys.
 
 #### Feature Support
 
@@ -116,7 +118,7 @@ This handles discount codes, prorated amounts, and custom pricing — each uniqu
 3. If found, verify plan exists at PayPal (`GET /v1/billing/plans/{id}`). If still ACTIVE, use it.
 4. If not found or invalid: create new Plan with billing cycles + setup fee. Store plan_id in level meta map.
 
-**Setup fee:** When `initial_payment` differs from `billing_amount`, the difference is set as `setup_fee` in the Plan's `payment_preferences`.
+**Setup fee:** The `initial_payment` amount is always set as `setup_fee` in the Plan's `payment_preferences`. PayPal charges the setup fee immediately at subscription activation, while the first regular billing cycle starts at `start_time` (one period out). This means the setup fee represents the initial payment regardless of whether it equals the recurring amount.
 
 **Trial support:** PMPro trial periods map to PayPal `billing_cycles` with `tenure_type: TRIAL`.
 
@@ -374,9 +376,9 @@ This plugin runs alongside the legacy PayPal gateways in PMPro core:
 
 | Option Key | Value |
 |-----------|-------|
-| `pmpro_paypal_client_id` | PayPal Client ID |
-| `pmpro_paypal_client_secret` | PayPal Client Secret |
-| `pmpro_paypal_webhook_id` | Auto-registered webhook ID |
+| `pmpro_paypal_client_id_live` / `_sandbox` | PayPal Client ID (per-environment) |
+| `pmpro_paypal_client_secret_live` / `_sandbox` | PayPal Client Secret (per-environment) |
+| `pmpro_paypal_webhook_id_live` / `_sandbox` | Auto-registered webhook ID (per-environment) |
 
 ### Transients
 
@@ -412,7 +414,7 @@ Note: `subscription_transaction_id` is stored directly on the order object (not 
 1. Add the event type string to the `$events` array in `maybe_register_webhook()`.
 2. Add a `case` in the `switch` block in `pmpro_paypal_handle_webhook()`.
 3. Write a handler function in `webhook-handler.php`.
-4. If the webhook was already registered, delete the old one from PayPal and clear the `pmpro_paypal_webhook_id` option to trigger re-registration.
+4. If the webhook was already registered, delete the old one from PayPal and clear the environment-specific webhook ID option (e.g., `pmpro_paypal_webhook_id_live` or `pmpro_paypal_webhook_id_sandbox`) to trigger re-registration.
 
 ### Testing Without Webhooks
 
@@ -422,7 +424,7 @@ For local development, use a tunnel service (e.g., ngrok) to expose the webhook 
 
 ### Environment Separation
 
-Product IDs, Plan IDs, webhook IDs, and OAuth tokens are all stored separately per environment (sandbox vs live). Switching environments in PMPro settings will use the correct set of stored data.
+All PayPal state is stored per-environment: Client ID, Client Secret, webhook ID, Product IDs, Plan IDs, and OAuth tokens. Switching environments in PMPro settings will use the correct set of stored data. Credentials and webhook IDs are resolved via `PMProGateway_paypal::get_option_names()`. OAuth tokens are cached in transients keyed by environment and are automatically cleared when credentials are saved.
 
 ### PMPro Gateway Contract
 
