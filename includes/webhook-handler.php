@@ -92,7 +92,7 @@ function pmpro_paypal_handle_webhook( $request ) {
  * @return bool
  */
 function pmpro_paypal_verify_webhook( $request, $event ) {
-	$webhook_id = get_option( 'pmpro_paypal_webhook_id' );
+	$webhook_id = get_option( PMProGateway_paypal::get_webhook_id_option_name() );
 	if ( empty( $webhook_id ) ) {
 		// No webhook ID stored — can't verify. Allow in sandbox for testing.
 		return 'sandbox' === get_option( 'pmpro_gateway_environment' );
@@ -311,6 +311,26 @@ function pmpro_paypal_handle_refund( $resource, $event_type ) {
 		return 'Order already marked as refunded.';
 	}
 
+	// Determine if this is a partial or full refund.
+	$refund_amount = $resource['amount']['total'] ?? $resource['amount']['value'] ?? '';
+	$order_total   = $morder->total;
+	$is_partial    = ! empty( $refund_amount ) && ! empty( $order_total )
+		&& abs( (float) $refund_amount - (float) $order_total ) > 0.01;
+
+	if ( $is_partial ) {
+		// Partial refund — add a note but don't change order status or send emails.
+		if ( method_exists( $morder, 'add_order_note' ) ) {
+			$morder->add_order_note( sprintf(
+				'PayPal webhook: Partial refund of %s received. Refund ID: %s',
+				$refund_amount,
+				$refund_id
+			) );
+		}
+		$morder->saveOrder();
+		return 'Order #' . $morder->id . ' partial refund noted.';
+	}
+
+	// Full refund.
 	$morder->status = 'refunded';
 
 	if ( method_exists( $morder, 'add_order_note' ) ) {
@@ -322,7 +342,7 @@ function pmpro_paypal_handle_refund( $resource, $event_type ) {
 
 	$morder->saveOrder();
 
-	// Send refund emails.
+	// Send refund emails for full refunds only.
 	$user = get_userdata( $morder->user_id );
 	if ( $user ) {
 		$pmproemail = new PMProEmail();

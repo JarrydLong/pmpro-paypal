@@ -65,10 +65,10 @@ function pmpro_paypal_gateway_ready( $r ) {
 	global $pmpro_gateway_ready;
 	$gateway = pmpro_getGateway();
 	if ( 'paypal' === $gateway ) {
-		$environment = get_option( 'pmpro_gateway_environment' );
-		$client_id   = get_option( 'pmpro_paypal_client_id' );
-		$secret      = get_option( 'pmpro_paypal_client_secret' );
-		$pmpro_gateway_ready = ! empty( $environment ) && ! empty( $client_id ) && ! empty( $secret );
+		$option_names = PMProGateway_paypal::get_option_names();
+		$client_id    = get_option( $option_names['client_id'] );
+		$secret       = get_option( $option_names['client_secret'] );
+		$pmpro_gateway_ready = ! empty( $client_id ) && ! empty( $secret );
 		if ( $pmpro_gateway_ready ) {
 			$r = true;
 		}
