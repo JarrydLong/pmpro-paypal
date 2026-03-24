@@ -27,12 +27,22 @@ function pmpro_paypal_init() {
 		return;
 	}
 
+	// Require PMPro 3.7.1+ which renames the old 'paypal' (Website Payments Pro) slug
+	// to 'paypalwpp', freeing the 'paypal' slug for this add-on.
+	if ( defined( 'PMPRO_VERSION' ) && version_compare( PMPRO_VERSION, '3.7.1', '<' ) ) {
+		add_action( 'admin_notices', 'pmpro_paypal_needs_core_upgrade_notice' );
+		return;
+	}
+
 	// Load classes.
 	require_once PMPRO_PAYPAL_DIR . 'classes/class-paypal-api.php';
 	require_once PMPRO_PAYPAL_DIR . 'classes/class-pmprogateway-paypal.php';
 
 	// Register webhook REST route.
 	add_action( 'rest_api_init', 'pmpro_paypal_register_webhook_route' );
+
+	// Set gateway_ready based on credentials.
+	add_filter( 'pmpro_is_ready', 'pmpro_paypal_gateway_ready' );
 }
 add_action( 'plugins_loaded', 'pmpro_paypal_init', 20 );
 
@@ -75,4 +85,19 @@ function pmpro_paypal_gateway_ready( $r ) {
 	}
 	return $r;
 }
-add_filter( 'pmpro_is_ready', 'pmpro_paypal_gateway_ready' );
+
+/**
+ * Show admin notice when PMPro core is too old for this add-on.
+ *
+ * @since 1.0
+ */
+function pmpro_paypal_needs_core_upgrade_notice() {
+	?>
+	<div class="notice notice-error">
+		<p>
+			<strong><?php esc_html_e( 'Paid Memberships Pro - PayPal Gateway', 'pmpro-paypal' ); ?>:</strong>
+			<?php esc_html_e( 'This add-on requires Paid Memberships Pro version 3.7.1 or later. Please update Paid Memberships Pro to use the PayPal Gateway.', 'pmpro-paypal' ); ?>
+		</p>
+	</div>
+	<?php
+}
