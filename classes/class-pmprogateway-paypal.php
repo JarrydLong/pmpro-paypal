@@ -616,9 +616,13 @@ class PMProGateway_paypal extends PMProGateway {
 			$order->saveOrder();
 
 			// Find approve link and redirect.
+			// PayPal's checkout page expects to be opened in a popup via their JS SDK.
+			// Server-side redirects carry a Referer header that PayPal rejects with
+			// INVALID_TOKEN. Stripping the referer simulates the clean popup context.
 			$links = $result['links'] ?? array();
 			foreach ( $links as $link ) {
 				if ( 'approve' === ( $link['rel'] ?? '' ) ) {
+					header( 'Referrer-Policy: no-referrer' );
 					wp_redirect( $link['href'] );
 					exit;
 				}
@@ -637,21 +641,17 @@ class PMProGateway_paypal extends PMProGateway {
 					array(
 						'amount' => array(
 							'currency_code' => $currency,
-							'value'         => (string) $initial_payment_amount,
+							'value'         => pmpro_round_price_as_string( $initial_payment_amount ),
 						),
 						'description' => substr( $level->name, 0, 127 ),
 					),
 				),
-				'payment_source' => array(
-					'paypal' => array(
-						'experience_context' => array(
-							'payment_method_preference' => 'IMMEDIATE_PAYMENT_REQUIRED',
-							'shipping_preference'       => 'NO_SHIPPING',
-							'user_action'               => 'PAY_NOW',
-							'return_url'                => apply_filters( 'pmpro_confirmation_url', add_query_arg( 'pmpro_level', $level->id, pmpro_url( 'confirmation' ) ), $order->user_id, $level ),
-							'cancel_url'                => add_query_arg( 'pmpro_level', $level->id, pmpro_url( 'checkout' ) ),
-						),
-					),
+				'application_context' => array(
+					'brand_name'          => substr( get_bloginfo( 'name' ), 0, 127 ),
+					'shipping_preference' => 'NO_SHIPPING',
+					'user_action'         => 'PAY_NOW',
+					'return_url'          => apply_filters( 'pmpro_confirmation_url', add_query_arg( 'pmpro_level', $level->id, pmpro_url( 'confirmation' ) ), $order->user_id, $level ),
+					'cancel_url'          => add_query_arg( 'pmpro_level', $level->id, pmpro_url( 'checkout' ) ),
 				),
 			);
 
@@ -673,10 +673,12 @@ class PMProGateway_paypal extends PMProGateway {
 			// Save PayPal order ID to order meta.
 			update_pmpro_membership_order_meta( $order->id, 'paypal_order_id', $result['id'] );
 
-			// Find payer-action or approve link and redirect.
+			// Find approve link and redirect.
 			$links = $result['links'] ?? array();
 			foreach ( $links as $link ) {
-				if ( in_array( $link['rel'] ?? '', array( 'payer-action', 'approve' ), true ) ) {
+				if ( 'approve' === ( $link['rel'] ?? '' ) ) {
+					// PayPal rejects checkout requests that carry a third-party Referer header.
+					header( 'Referrer-Policy: no-referrer' );
 					wp_redirect( $link['href'] );
 					exit;
 				}
