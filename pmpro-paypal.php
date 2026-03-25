@@ -92,6 +92,10 @@ function pmpro_paypal_gateway_ready( $r ) {
  * @since 1.0
  */
 function pmpro_paypal_needs_core_upgrade_notice() {
+	// Only show on PMPro admin pages.
+	if ( ! isset( $_REQUEST['page'] ) || strpos( sanitize_text_field( $_REQUEST['page'] ), 'pmpro-' ) !== 0 ) {
+		return;
+	}
 	?>
 	<div class="notice notice-error">
 		<p>
