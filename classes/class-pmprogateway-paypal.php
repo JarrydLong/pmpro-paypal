@@ -33,7 +33,8 @@ class PMProGateway_paypal extends PMProGateway {
 			add_filter( 'pmpro_checkout_default_submit_button', array( 'PMProGateway_paypal', 'pmpro_checkout_default_submit_button' ) );
 		}
 
-		// Refund hook.
+		// Refund hooks.
+		add_filter( 'pmpro_allowed_refunds_gateways', array( 'PMProGateway_paypal', 'allowed_refund_gateways' ) );
 		add_filter( 'pmpro_process_refund_paypal', array( 'PMProGateway_paypal', 'process_refund' ), 10, 2 );
 	}
 
@@ -862,6 +863,14 @@ class PMProGateway_paypal extends PMProGateway {
 	 * @param MemberOrder $order The order to refund.
 	 * @return bool True on success.
 	 */
+	/**
+	 * Add PayPal to the list of gateways that support refunds.
+	 */
+	public static function allowed_refund_gateways( $gateways ) {
+		$gateways[] = 'paypal';
+		return $gateways;
+	}
+
 	public static function process_refund( $refunded, $order ) {
 		if ( $refunded ) {
 			return $refunded;
