@@ -659,7 +659,14 @@ class PMProGateway_paypal extends PMProGateway {
 			 */
 			$order_args = apply_filters( 'pmpro_paypal_create_order_args', $order_args, $level );
 
+			// TODO: Remove this debug logging after testing.
+			error_log( 'PMPro PayPal: create_order args: ' . print_r( $order_args, true ) );
+
 			$result = $api->create_order( $order_args );
+
+			// TODO: Remove this debug logging after testing.
+			error_log( 'PMPro PayPal: create_order result: ' . print_r( $result, true ) );
+
 			if ( is_wp_error( $result ) ) {
 				$order->error      = $result->get_error_message();
 				$order->shorterror = $result->get_error_message();
