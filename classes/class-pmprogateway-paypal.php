@@ -642,16 +642,12 @@ class PMProGateway_paypal extends PMProGateway {
 						'description' => substr( $level->name, 0, 127 ),
 					),
 				),
-				'payment_source' => array(
-					'paypal' => array(
-						'experience_context' => array(
-							'payment_method_preference' => 'IMMEDIATE_PAYMENT_REQUIRED',
-							'shipping_preference'       => 'NO_SHIPPING',
-							'user_action'               => 'PAY_NOW',
-							'return_url'                => apply_filters( 'pmpro_confirmation_url', add_query_arg( 'pmpro_level', $level->id, pmpro_url( 'confirmation' ) ), $order->user_id, $level ),
-							'cancel_url'                => add_query_arg( 'pmpro_level', $level->id, pmpro_url( 'checkout' ) ),
-						),
-					),
+				'application_context' => array(
+					'brand_name'          => get_bloginfo( 'name' ),
+					'shipping_preference' => 'NO_SHIPPING',
+					'user_action'         => 'PAY_NOW',
+					'return_url'          => apply_filters( 'pmpro_confirmation_url', add_query_arg( 'pmpro_level', $level->id, pmpro_url( 'confirmation' ) ), $order->user_id, $level ),
+					'cancel_url'          => add_query_arg( 'pmpro_level', $level->id, pmpro_url( 'checkout' ) ),
 				),
 			);
 
@@ -673,10 +669,10 @@ class PMProGateway_paypal extends PMProGateway {
 			// Save PayPal order ID to order meta.
 			update_pmpro_membership_order_meta( $order->id, 'paypal_order_id', $result['id'] );
 
-			// Find payer-action or approve link and redirect.
+			// Find approve link and redirect.
 			$links = $result['links'] ?? array();
 			foreach ( $links as $link ) {
-				if ( in_array( $link['rel'] ?? '', array( 'payer-action', 'approve' ), true ) ) {
+				if ( 'approve' === ( $link['rel'] ?? '' ) ) {
 					wp_redirect( $link['href'] );
 					exit;
 				}
