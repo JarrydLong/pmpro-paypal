@@ -33,20 +33,10 @@ class PMPro_PayPal_API {
 	 */
 	public function __construct() {
 		$environment = get_option( 'pmpro_gateway_environment', 'sandbox' );
+		$suffix      = 'sandbox' === $environment ? '_sandbox' : '_live';
 
-		// Read per-environment credentials via the gateway class helper.
-		if ( class_exists( 'PMProGateway_paypal' ) ) {
-			$option_names = PMProGateway_paypal::get_option_names( $environment );
-		} else {
-			$suffix = ( 'sandbox' === $environment ) ? '_sandbox' : '_live';
-			$option_names = array(
-				'client_id'     => 'pmpro_paypal_client_id' . $suffix,
-				'client_secret' => 'pmpro_paypal_client_secret' . $suffix,
-			);
-		}
-
-		$this->client_id     = get_option( $option_names['client_id'], '' );
-		$this->client_secret = get_option( $option_names['client_secret'], '' );
+		$this->client_id     = get_option( 'pmpro_paypal_client_id' . $suffix, '' );
+		$this->client_secret = get_option( 'pmpro_paypal_client_secret' . $suffix, '' );
 
 		if ( 'sandbox' === $environment ) {
 			$this->base_url = 'https://api-m.sandbox.paypal.com';

@@ -9,9 +9,7 @@ defined( 'ABSPATH' ) || exit;
  */
 function pmpro_paypal_handle_webhook( $request ) {
 	// Set webhook context.
-	if ( function_exists( 'pmpro_doing_webhook' ) ) {
-		pmpro_doing_webhook( 'paypal', true );
-	}
+	pmpro_doing_webhook( 'paypal', true );
 
 	$body = $request->get_body();
 	$event = json_decode( $body, true );
@@ -31,40 +29,42 @@ function pmpro_paypal_handle_webhook( $request ) {
 
 	// Route by event type.
 	switch ( $event_type ) {
+		// Buyer approved a one-time payment order at PayPal. Capture and complete checkout.
 		case 'CHECKOUT.ORDER.APPROVED':
 			$message = pmpro_paypal_handle_checkout_order_approved( $resource );
 			break;
 
+		// Subscription became active after buyer approval. Complete subscription checkout.
 		case 'BILLING.SUBSCRIPTION.ACTIVATED':
 			$message = pmpro_paypal_handle_subscription_activated( $resource );
 			break;
 
+		// Recurring subscription payment collected. Record the renewal.
 		case 'PAYMENT.SALE.COMPLETED':
 			$message = pmpro_paypal_handle_sale_completed( $resource );
 			break;
 
-		case 'PAYMENT.CAPTURE.COMPLETED':
-			// Captures are handled by CHECKOUT.ORDER.APPROVED webhook. Log only.
-			$message = 'Capture completed. Already processed via checkout order approval.';
-			break;
-
+		// One-time capture or subscription sale was refunded.
 		case 'PAYMENT.CAPTURE.REFUNDED':
 		case 'PAYMENT.SALE.REFUNDED':
 			$message = pmpro_paypal_handle_refund( $resource, $event_type );
 			break;
 
+		// Subscription cancelled by admin/buyer or expired naturally.
 		case 'BILLING.SUBSCRIPTION.CANCELLED':
-		case 'BILLING.SUBSCRIPTION.SUSPENDED':
 		case 'BILLING.SUBSCRIPTION.EXPIRED':
 			$message = pmpro_paypal_handle_subscription_cancelled( $resource );
 			break;
 
-		case 'BILLING.SUBSCRIPTION.PAYMENT.FAILED':
-			$message = pmpro_paypal_handle_payment_failed( $resource );
+		// Subscription suspended (e.g. failed payment retries). Cancel it fully
+		// so PayPal stops retrying and the membership is removed immediately.
+		case 'BILLING.SUBSCRIPTION.SUSPENDED':
+			$message = pmpro_paypal_handle_subscription_suspended( $resource );
 			break;
 
-		case 'BILLING.SUBSCRIPTION.RE-ACTIVATED':
-			$message = pmpro_paypal_handle_subscription_reactivated( $resource );
+		// Recurring payment attempt failed.
+		case 'BILLING.SUBSCRIPTION.PAYMENT.FAILED':
+			$message = pmpro_paypal_handle_payment_failed( $resource );
 			break;
 
 		default:
@@ -92,7 +92,9 @@ function pmpro_paypal_handle_webhook( $request ) {
  * @return bool
  */
 function pmpro_paypal_verify_webhook( $request, $event ) {
-	$webhook_id = get_option( PMProGateway_paypal::get_webhook_id_option_name() );
+	$environment = get_option( 'pmpro_gateway_environment', 'sandbox' );
+	$suffix      = 'sandbox' === $environment ? '_sandbox' : '_live';
+	$webhook_id  = get_option( 'pmpro_paypal_webhook_id' . $suffix );
 	if ( empty( $webhook_id ) ) {
 		// No webhook ID stored — can't verify. Allow in sandbox for testing.
 		return 'sandbox' === get_option( 'pmpro_gateway_environment' );
@@ -173,9 +175,7 @@ function pmpro_paypal_handle_checkout_order_approved( $resource ) {
 	// Set payment transaction ID from capture.
 	if ( ! empty( $paypal_order['purchase_units'][0]['payments']['captures'][0]['id'] ) ) {
 		$morder->payment_transaction_id = $paypal_order['purchase_units'][0]['payments']['captures'][0]['id'];
-		if ( method_exists( $morder, 'update_order_meta' ) ) {
-			$morder->update_order_meta( 'paypal_capture_id', $morder->payment_transaction_id );
-		}
+		update_pmpro_membership_order_meta( $morder->id, 'paypal_capture_id', $morder->payment_transaction_id );
 	}
 	$morder->saveOrder();
 
@@ -209,15 +209,12 @@ function pmpro_paypal_handle_subscription_activated( $resource ) {
 	$api = new PMPro_PayPal_API();
 
 	// Find the token order by subscription_transaction_id.
-	$morder = null;
-	if ( method_exists( 'MemberOrder', 'get_order' ) ) {
-		$morder = MemberOrder::get_order( array(
-			'gateway'                     => 'paypal',
-			'gateway_environment'         => 'sandbox' === $gateway_env ? 'sandbox' : 'live',
-			'status'                      => 'token',
-			'subscription_transaction_id' => $subscription_id,
-		) );
-	}
+	$morder = MemberOrder::get_order( array(
+		'gateway'                     => 'paypal',
+		'gateway_environment'         => 'sandbox' === $gateway_env ? 'sandbox' : 'live',
+		'status'                      => 'token',
+		'subscription_transaction_id' => $subscription_id,
+	) );
 
 	if ( empty( $morder ) || empty( $morder->id ) ) {
 		return 'Token order not found for subscription ' . $subscription_id;
@@ -268,11 +265,7 @@ function pmpro_paypal_handle_sale_completed( $resource ) {
 		'payment_type'                => 'PayPal',
 	);
 
-	if ( function_exists( 'pmpro_handle_recurring_payment_succeeded_at_gateway' ) ) {
-		return pmpro_handle_recurring_payment_succeeded_at_gateway( $order_data );
-	}
-
-	return 'pmpro_handle_recurring_payment_succeeded_at_gateway not available.';
+	return pmpro_handle_recurring_payment_succeeded_at_gateway( $order_data );
 }
 
 /**
@@ -303,7 +296,7 @@ function pmpro_paypal_handle_refund( $resource, $event_type ) {
 	$morder = new MemberOrder();
 	$morder->getMemberOrderByPaymentTransactionID( $parent_id );
 
-	if ( empty( $morder ) || empty( $morder->id ) ) {
+	if ( empty( $morder->id ) ) {
 		return 'No matching order found for refund (transaction: ' . $parent_id . ').';
 	}
 
@@ -319,13 +312,11 @@ function pmpro_paypal_handle_refund( $resource, $event_type ) {
 
 	if ( $is_partial ) {
 		// Partial refund — add a note but don't change order status or send emails.
-		if ( method_exists( $morder, 'add_order_note' ) ) {
-			$morder->add_order_note( sprintf(
-				'PayPal webhook: Partial refund of %s received. Refund ID: %s',
-				$refund_amount,
-				$refund_id
-			) );
-		}
+		$morder->add_order_note( sprintf(
+			'PayPal webhook: Partial refund of %s received. Refund ID: %s',
+			$refund_amount,
+			$refund_id
+		) );
 		$morder->saveOrder();
 		return 'Order #' . $morder->id . ' partial refund noted.';
 	}
@@ -333,12 +324,10 @@ function pmpro_paypal_handle_refund( $resource, $event_type ) {
 	// Full refund.
 	$morder->status = 'refunded';
 
-	if ( method_exists( $morder, 'add_order_note' ) ) {
-		$morder->add_order_note( sprintf(
-			'PayPal webhook: Order refunded. Refund ID: %s',
-			$refund_id
-		) );
-	}
+	$morder->add_order_note( sprintf(
+		'PayPal webhook: Order refunded. Refund ID: %s',
+		$refund_id
+	) );
 
 	$morder->saveOrder();
 
@@ -356,7 +345,45 @@ function pmpro_paypal_handle_refund( $resource, $event_type ) {
 }
 
 /**
- * Handle subscription cancellation/suspension/expiration.
+ * Handle subscription suspension by fully cancelling it.
+ *
+ * Cancels the subscription at PayPal so it stops retrying payments.
+ * The resulting CANCELLED webhook will handle membership removal
+ * through the normal cancellation path.
+ */
+function pmpro_paypal_handle_subscription_suspended( $resource ) {
+	$subscription_id = $resource['id'] ?? '';
+	$gateway_env     = get_option( 'pmpro_gateway_environment', 'sandbox' );
+
+	if ( empty( $subscription_id ) ) {
+		return 'No subscription ID in event.';
+	}
+
+	// Only act if this subscription belongs to this site.
+	$subscription = PMPro_Subscription::get_subscription_from_subscription_transaction_id(
+		$subscription_id,
+		'paypal',
+		'sandbox' === $gateway_env ? 'sandbox' : 'live'
+	);
+
+	if ( empty( $subscription ) ) {
+		return 'Subscription ' . $subscription_id . ' not found on this site. Ignoring suspension.';
+	}
+
+	// Cancel the subscription at PayPal. The resulting CANCELLED
+	// webhook will handle membership removal through the normal path.
+	$api = new PMPro_PayPal_API();
+	$result = $api->cancel_subscription( $subscription_id, 'Cancelled after suspension.' );
+
+	if ( is_wp_error( $result ) ) {
+		return 'Failed to cancel suspended subscription ' . $subscription_id . ': ' . $result->get_error_message();
+	}
+
+	return 'Suspended subscription ' . $subscription_id . ' cancelled at PayPal. Awaiting cancellation webhook.';
+}
+
+/**
+ * Handle subscription cancellation or expiration.
  */
 function pmpro_paypal_handle_subscription_cancelled( $resource ) {
 	$subscription_id = $resource['id'] ?? '';
@@ -366,15 +393,11 @@ function pmpro_paypal_handle_subscription_cancelled( $resource ) {
 		return 'No subscription ID in event.';
 	}
 
-	if ( function_exists( 'pmpro_handle_subscription_cancellation_at_gateway' ) ) {
-		return pmpro_handle_subscription_cancellation_at_gateway(
-			$subscription_id,
-			'paypal',
-			'sandbox' === $gateway_env ? 'sandbox' : 'live'
-		);
-	}
-
-	return 'pmpro_handle_subscription_cancellation_at_gateway not available.';
+	return pmpro_handle_subscription_cancellation_at_gateway(
+		$subscription_id,
+		'paypal',
+		'sandbox' === $gateway_env ? 'sandbox' : 'live'
+	);
 }
 
 /**
@@ -394,37 +417,5 @@ function pmpro_paypal_handle_payment_failed( $resource ) {
 		'subscription_transaction_id' => $subscription_id,
 	);
 
-	if ( function_exists( 'pmpro_handle_recurring_payment_failure_at_gateway' ) ) {
-		return pmpro_handle_recurring_payment_failure_at_gateway( $order_data );
-	}
-
-	return 'pmpro_handle_recurring_payment_failure_at_gateway not available.';
-}
-
-/**
- * Handle subscription re-activation.
- */
-function pmpro_paypal_handle_subscription_reactivated( $resource ) {
-	$subscription_id = $resource['id'] ?? '';
-
-	if ( empty( $subscription_id ) ) {
-		return 'No subscription ID in re-activation event.';
-	}
-
-	// Find the PMPro subscription.
-	$gateway_env = get_option( 'pmpro_gateway_environment', 'sandbox' );
-	if ( class_exists( 'PMPro_Subscription' ) ) {
-		$subscription = PMPro_Subscription::get_subscription_from_subscription_transaction_id(
-			$subscription_id,
-			'paypal',
-			'sandbox' === $gateway_env ? 'sandbox' : 'live'
-		);
-
-		if ( ! empty( $subscription ) ) {
-			$subscription->set( array( 'status' => 'active' ) );
-			return 'Subscription ' . $subscription_id . ' re-activated.';
-		}
-	}
-
-	return 'Could not find subscription ' . $subscription_id . ' for re-activation.';
+	return pmpro_handle_recurring_payment_failure_at_gateway( $order_data );
 }
