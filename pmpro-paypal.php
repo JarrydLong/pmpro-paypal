@@ -106,3 +106,23 @@ function pmpro_paypal_needs_core_upgrade_notice() {
 	</div>
 	<?php
 }
+
+/**
+ * Add links to the plugin row meta.
+ *
+ * @param array  $links the links array
+ * @param string $file the file name
+ * @return array $links the links array
+ * @since 1.0
+ */
+function pmpro_paypal_plugin_row_meta( $links, $file ) {
+	if ( strpos( $file, 'pmpro-paypal.php' ) !== false ) {
+		$new_links = array(
+			'<a href="' . esc_url( 'https://www.paidmembershipspro.com/add-ons/pmpro-paypal/' ) . '" title="' . esc_attr__( 'View Documentation', 'pmpro-paypal' ) . '">' . esc_html__( 'Docs', 'pmpro-paypal' ) . '</a>',
+			'<a href="' . esc_url( 'https://www.paidmembershipspro.com/support/' ) . '" title="' . esc_attr__( 'Visit Customer Support Forum', 'pmpro-paypal' ) . '">' . esc_html__( 'Support', 'pmpro-paypal' ) . '</a>',
+		);
+		$links = array_merge( $links, $new_links );
+	}
+	return $links;
+}
+add_filter( 'plugin_row_meta', 'pmpro_paypal_plugin_row_meta', 10, 2 );

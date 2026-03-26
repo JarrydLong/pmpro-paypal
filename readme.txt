@@ -20,7 +20,7 @@ This plugin adds PayPal as a payment gateway for Paid Memberships Pro using PayP
 * **Webhooks** for automated checkout completion, renewal payments, cancellations, refunds, and other events
 * **Token order fallback** — if the user returns from PayPal before the webhook fires, the plugin polls PayPal directly to complete checkout
 
-The old PayPal Express and Website Payments Pro gateways in PMPro core use PayPal's deprecated NVP/SOAP API. This plugin replaces them with PayPal's current REST platform — the same APIs behind PayPal's "Complete Payments" (PPCP) product.
+The old PayPal Express and Website Payments Pro gateways in PMPro core use PayPal's deprecated NVP/SOAP API. This plugin replaces them with PayPal's current REST API platform.
 
 = How Checkout Works =
 
@@ -34,7 +34,7 @@ This offsite redirect approach ensures that discount codes, add-on pricing, tax 
 
 = Requirements =
 
-* Paid Memberships Pro (latest version)
+* Paid Memberships Pro 3.7.1 or later
 * PayPal Business account
 * HTTPS on your site (required by PayPal for webhooks)
 
@@ -64,7 +64,7 @@ You need a **Client ID** and **Client Secret** from the PayPal Developer Dashboa
 2. Go to **PMPro > Settings > Payment Gateway**.
 3. Select **PayPal** from the gateway dropdown.
 4. Set the **Payment Gateway Environment** to Sandbox or Live.
-5. Click the PayPal row to configure it, then enter your **Client ID** and **Client Secret**.
+5. Enter your **Client ID** and **Client Secret** for both the Live and Sandbox environments.
 6. Click **Save Settings**.
 
 = 3. Webhook (Automatic) =
@@ -109,10 +109,4 @@ No. This plugin uses PayPal Webhooks (the modern replacement for IPN), and they 
 == Changelog ==
 
 = 1.0 =
-* Initial release with offsite redirect checkout.
-* One-time payments via PayPal Orders V2 API.
-* Recurring subscriptions via PayPal Subscriptions API v1 with gateway-managed billing.
-* Automatic webhook registration and signature verification.
-* Token order fallback (`check_token_orders`) for webhook timing edge cases.
-* Lazy product/plan creation with MD5-based plan matching.
-* Full webhook handling: checkout completion, renewals, cancellations, refunds, payment failures, reactivations.
+* Initial release.
