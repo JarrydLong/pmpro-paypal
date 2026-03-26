@@ -8,6 +8,9 @@ defined( 'ABSPATH' ) || exit;
  * @return WP_REST_Response
  */
 function pmpro_paypal_handle_webhook( $request ) {
+	global $logstr;
+	$logstr = '';
+
 	// Set webhook context.
 	pmpro_doing_webhook( 'paypal', true );
 
@@ -15,17 +18,23 @@ function pmpro_paypal_handle_webhook( $request ) {
 	$event = json_decode( $body, true );
 
 	if ( empty( $event ) || empty( $event['event_type'] ) ) {
+		$logstr .= 'Invalid payload received.';
+		pmpro_paypal_webhook_log( $logstr );
 		return new WP_REST_Response( array( 'error' => 'Invalid payload' ), 400 );
 	}
 
 	// Verify webhook signature.
 	$verified = pmpro_paypal_verify_webhook( $request, $event );
 	if ( ! $verified ) {
+		$logstr .= 'Signature verification failed.';
+		pmpro_paypal_webhook_log( $logstr );
 		return new WP_REST_Response( array( 'error' => 'Signature verification failed' ), 401 );
 	}
 
 	$event_type = $event['event_type'];
 	$resource   = $event['resource'] ?? array();
+	$logstr .= 'Event type: ' . $event_type . "\n";
+	$logstr .= 'Resource ID: ' . ( $resource['id'] ?? 'N/A' ) . "\n";
 
 	// Route by event type.
 	switch ( $event_type ) {
@@ -72,6 +81,8 @@ function pmpro_paypal_handle_webhook( $request ) {
 			break;
 	}
 
+	$logstr .= 'Result: ' . $message . "\n";
+
 	/**
 	 * Fires after a PayPal webhook event is processed.
 	 *
@@ -81,7 +92,41 @@ function pmpro_paypal_handle_webhook( $request ) {
 	 */
 	do_action( 'pmpro_paypal_webhook_processed', $event_type, $resource, $message );
 
+	pmpro_paypal_webhook_log( $logstr );
+
 	return new WP_REST_Response( array( 'message' => $message ), 200 );
+}
+
+/**
+ * Log webhook processing output.
+ *
+ * Define PMPRO_PAYPAL_WEBHOOK_DEBUG in wp-config.php to enable:
+ * - 'log'          — write to logs/paypal-webhook.txt
+ * - email address  — email the log to that address
+ * - any truthy     — email to admin_email
+ *
+ * @param string $logstr The log content.
+ */
+function pmpro_paypal_webhook_log( $logstr ) {
+	if ( ! defined( 'PMPRO_PAYPAL_WEBHOOK_DEBUG' ) || ! PMPRO_PAYPAL_WEBHOOK_DEBUG ) {
+		return;
+	}
+
+	$logstr = 'Logged On: ' . date_i18n( 'm/d/Y H:i:s' ) . "\n" . $logstr . "\n-------------\n";
+
+	if ( 'log' === PMPRO_PAYPAL_WEBHOOK_DEBUG ) {
+		$logfile = apply_filters( 'pmpro_paypal_webhook_logfile', pmpro_get_restricted_file_path( 'logs', 'paypal-webhook.txt' ) );
+		$loghandle = fopen( $logfile, 'a+' );
+		fwrite( $loghandle, $logstr );
+		fclose( $loghandle );
+	} else {
+		if ( strpos( PMPRO_PAYPAL_WEBHOOK_DEBUG, '@' ) ) {
+			$log_email = PMPRO_PAYPAL_WEBHOOK_DEBUG;
+		} else {
+			$log_email = get_option( 'admin_email' );
+		}
+		wp_mail( $log_email, get_option( 'blogname' ) . ' PayPal Webhook Log', nl2br( esc_html( $logstr ) ) );
+	}
 }
 
 /**
