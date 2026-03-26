@@ -313,11 +313,8 @@ class PMProGateway_paypal extends PMProGateway {
 		$recurring  = pmpro_round_price_as_string( (float) $level->billing_amount );
 		$cycle_num  = intval( $level->cycle_number );
 		$cycle_per  = strtoupper( $level->cycle_period ?? 'MONTH' );
-		$trial_amt  = pmpro_round_price_as_string( (float) ( $level->trial_amount ?? 0 ) );
-		$trial_lim  = intval( $level->trial_limit ?? 0 );
-		$bill_lim   = intval( $level->billing_limit ?? 0 );
 
-		$hash_input = "{$recurring}_{$cycle_num}_{$cycle_per}_{$initial}_{$trial_amt}_{$trial_lim}_{$bill_lim}_{$currency}";
+		$hash_input = "{$recurring}_{$cycle_num}_{$cycle_per}_{$initial}_{$currency}";
 		$plan_hash  = md5( $hash_input );
 
 		// Check existing plans stored in level meta.
@@ -337,50 +334,24 @@ class PMProGateway_paypal extends PMProGateway {
 			unset( $plans_map[ $plan_hash ] );
 		}
 
-		// Build billing cycles.
-		$billing_cycles = array();
-		$sequence       = 1;
-
-		// Trial cycle.
-		if ( $trial_lim > 0 && (float) $trial_amt >= 0 ) {
-			$billing_cycles[] = array(
+		// Build billing cycles — single regular cycle, infinite.
+		$billing_cycles = array(
+			array(
 				'frequency'      => array(
 					'interval_unit'  => self::map_cycle_period( $cycle_per ),
 					'interval_count' => $cycle_num,
 				),
-				'tenure_type'    => 'TRIAL',
-				'sequence'       => $sequence++,
-				'total_cycles'   => $trial_lim,
+				'tenure_type'    => 'REGULAR',
+				'sequence'       => 1,
+				'total_cycles'   => 0,
 				'pricing_scheme' => array(
 					'fixed_price' => array(
-						'value'         => $trial_amt,
+						'value'         => $recurring,
 						'currency_code' => $currency,
 					),
 				),
-			);
-		}
-
-		// Regular cycle.
-		$regular_cycle = array(
-			'frequency'      => array(
-				'interval_unit'  => self::map_cycle_period( $cycle_per ),
-				'interval_count' => $cycle_num,
-			),
-			'tenure_type'    => 'REGULAR',
-			'sequence'       => $sequence,
-			'pricing_scheme' => array(
-				'fixed_price' => array(
-					'value'         => $recurring,
-					'currency_code' => $currency,
-				),
 			),
 		);
-		if ( $bill_lim > 0 ) {
-			$regular_cycle['total_cycles'] = $bill_lim;
-		} else {
-			$regular_cycle['total_cycles'] = 0; // Infinite.
-		}
-		$billing_cycles[] = $regular_cycle;
 
 		// Setup fee — charged immediately at subscription activation.
 		// PayPal's first regular billing cycle starts at start_time (one period out),
@@ -546,10 +517,6 @@ class PMProGateway_paypal extends PMProGateway {
 			$plan_level = clone $level;
 			$plan_level->initial_payment = $initial_payment_amount;
 			$plan_level->billing_amount  = $recurring_payment_amount;
-			if ( ! empty( $plan_level->trial_amount ) ) {
-				$trial_tax = $order->getTaxForPrice( $plan_level->trial_amount );
-				$plan_level->trial_amount = pmpro_round_price( (float) $plan_level->trial_amount + (float) $trial_tax );
-			}
 
 			// Get or create PayPal product and plan.
 			$plan_id = self::get_or_create_plan( $plan_level, $currency );
