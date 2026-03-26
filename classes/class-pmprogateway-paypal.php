@@ -49,6 +49,13 @@ class PMProGateway_paypal extends PMProGateway {
 	}
 
 	/**
+	 * Description for gateway settings page.
+	 */
+	public static function get_description_for_gateway_settings() {
+		return esc_html__( 'With PayPal, members can pay with their PayPal balance, credit/debit cards, or linked bank accounts. PayPal is accepted worldwide and offers multi-currency support for 200+ markets and 25+ currencies.', 'pmpro-paypal' );
+	}
+
+	/**
 	 * Feature support.
 	 */
 	public static function supports( $feature ) {
