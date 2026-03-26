@@ -791,23 +791,17 @@ class PMProGateway_paypal extends PMProGateway {
 			$update_array['next_payment_date'] = date( 'Y-m-d H:i:s', strtotime( $result['billing_info']['next_billing_time'] ) );
 		}
 
-		// Cycle info and billing amount from plan definition.
-		// We pull billing_amount from the plan's REGULAR cycle pricing rather
-		// than billing_info.last_payment, which can reflect trial amounts,
-		// setup fees, or other non-steady-state payments.
+		// Pull cycle info and billing amount from the plan definition rather
+		// than billing_info.last_payment which can reflect setup fees.
 		if ( ! empty( $result['plan_id'] ) ) {
 			$plan = $api->get_plan( $result['plan_id'] );
-			if ( ! is_wp_error( $plan ) && ! empty( $plan['billing_cycles'] ) ) {
-				foreach ( $plan['billing_cycles'] as $cycle ) {
-					if ( 'REGULAR' === ( $cycle['tenure_type'] ?? '' ) ) {
-						$update_array['cycle_number'] = $cycle['frequency']['interval_count'] ?? 1;
-						$period = $cycle['frequency']['interval_unit'] ?? 'MONTH';
-						$update_array['cycle_period'] = ucfirst( strtolower( $period ) );
-						if ( ! empty( $cycle['pricing_scheme']['fixed_price']['value'] ) ) {
-							$update_array['billing_amount'] = $cycle['pricing_scheme']['fixed_price']['value'];
-						}
-						break;
-					}
+			if ( ! is_wp_error( $plan ) && ! empty( $plan['billing_cycles'][0] ) ) {
+				$cycle = $plan['billing_cycles'][0];
+				$update_array['cycle_number'] = $cycle['frequency']['interval_count'] ?? 1;
+				$period = $cycle['frequency']['interval_unit'] ?? 'MONTH';
+				$update_array['cycle_period'] = ucfirst( strtolower( $period ) );
+				if ( ! empty( $cycle['pricing_scheme']['fixed_price']['value'] ) ) {
+					$update_array['billing_amount'] = $cycle['pricing_scheme']['fixed_price']['value'];
 				}
 			}
 		}
