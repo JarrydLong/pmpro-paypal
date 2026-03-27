@@ -491,7 +491,7 @@ class PMProGateway_paypal extends PMProGateway {
 	 */
 	public function process( &$order ) {
 		// Free level — no payment needed.
-		if ( (float) $order->InitialPayment <= 0 && ! pmpro_isLevelRecurring( $order->membership_level ) ) {
+		if ( (float) $order->subtotal <= 0 && ! pmpro_isLevelRecurring( $order->membership_level ) ) {
 			$order->status = 'success';
 			return true;
 		}
@@ -536,11 +536,13 @@ class PMProGateway_paypal extends PMProGateway {
 			// Calculate profile start date (applies pmpro_set_profile_date filter).
 			$profile_start_date = pmpro_calculate_profile_start_date( $order, 'c' );
 
+			$user = get_userdata( $order->user_id );
+
 			$subscription_args = array(
 				'plan_id'    => $plan_id,
 				'start_time' => $profile_start_date,
 				'subscriber' => array(
-					'email_address' => $order->Email,
+					'email_address' => empty( $user->user_email ) ? '' : $user->user_email,
 				),
 				'application_context' => array(
 					'brand_name'          => get_bloginfo( 'name' ),
