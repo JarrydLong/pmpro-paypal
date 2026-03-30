@@ -2,7 +2,7 @@
 Contributors: strangerstudios, paidmembershipspro
 Tags: paypal, paid memberships pro, pmpro, payments, subscriptions
 Requires at least: 5.4
-Tested up to: 6.7
+Tested up to: 6.9
 Requires PHP: 7.4
 Stable tag: 1.0
 License: GPL-2.0+
@@ -108,5 +108,5 @@ No. This plugin uses PayPal Webhooks (the modern replacement for IPN), and they 
 
 == Changelog ==
 
-= 1.0 =
+= 1.0 - 2026-03-30 =
 * Initial release.
