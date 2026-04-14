@@ -26,7 +26,8 @@ function pmpro_paypal_handle_webhook( $request ) {
 	// Verify webhook signature.
 	$verified = pmpro_paypal_verify_webhook( $request, $event );
 	if ( ! $verified ) {
-		$logstr .= 'Signature verification failed.';
+		$logstr .= "Signature verification failed. Webhook rejected with 401.\n";
+		$logstr .= "Tip: If testing in sandbox behind a reverse proxy, use the pmpro_paypal_webhook_verified filter to bypass verification.\n";
 		pmpro_paypal_webhook_log( $logstr );
 		return new WP_REST_Response( array( 'error' => 'Signature verification failed' ), 401 );
 	}
@@ -137,12 +138,15 @@ function pmpro_paypal_webhook_log( $logstr ) {
  * @return bool
  */
 function pmpro_paypal_verify_webhook( $request, $event ) {
+	global $logstr;
+
 	$environment = get_option( 'pmpro_gateway_environment', 'sandbox' );
 	$suffix      = 'sandbox' === $environment ? '_sandbox' : '_live';
 	$webhook_id  = get_option( 'pmpro_paypal_webhook_id' . $suffix );
+
 	if ( empty( $webhook_id ) ) {
 		// No webhook ID stored — can't verify. Allow in sandbox for testing.
-		return 'sandbox' === get_option( 'pmpro_gateway_environment' );
+		return 'sandbox' === $environment;
 	}
 
 	$headers = $request->get_headers();
@@ -161,10 +165,25 @@ function pmpro_paypal_verify_webhook( $request, $event ) {
 	$result = $api->verify_webhook_signature( $verify_args );
 
 	if ( is_wp_error( $result ) ) {
-		return false;
+		$logstr .= 'Webhook verification API error: ' . $result->get_error_message() . "\n";
+		$verified = false;
+	} else {
+		$status   = $result['verification_status'] ?? 'UNKNOWN';
+		$logstr  .= 'Webhook verification status: ' . $status . "\n";
+		$verified = 'SUCCESS' === $status;
 	}
 
-	return ( $result['verification_status'] ?? '' ) === 'SUCCESS';
+	/**
+	 * Filter the webhook verification result.
+	 *
+	 * Return true to allow a webhook that failed signature verification,
+	 * or false to block one that passed. Use with caution.
+	 *
+	 * @param bool            $verified Whether PayPal's API confirmed the signature.
+	 * @param WP_REST_Request $request  The incoming webhook request.
+	 * @param array           $event    The decoded webhook event payload.
+	 */
+	return (bool) apply_filters( 'pmpro_paypal_webhook_verified', $verified, $request, $event );
 }
 
 /**
