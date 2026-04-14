@@ -180,9 +180,10 @@ function pmpro_paypal_verify_webhook( $request, $event ) {
 	 * or false to block one that passed. Use with caution.
 	 *
 	 * @param bool            $verified Whether PayPal's API confirmed the signature.
-	 * @param WP_REST_Request $request  The incoming webhook request.	 
+	 * @param WP_REST_Request $request  The incoming webhook request.
+	 * @param array           $event    The decoded webhook event payload.
 	 */
-	return (bool) apply_filters( 'pmpro_ipn_validate', $verified, $request );
+	return (bool) apply_filters( 'pmpro_paypal_webhook_verified', $verified, $request, $event );
 }
 
 /**
